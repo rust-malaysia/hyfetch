@@ -869,7 +869,7 @@ image_source="auto"
 # Antergos, antiX, AOSC OS, Aperio GNU/Linux, Aperture, Apricity, Arch, ArchBox, Archcraft,
 # archcraft_ascii, archcraft_minimal, ARCHlabs, ArchMerge, ArchStrike, ArcoLinux, ArseLinux, Artix,
 # Arya, Asahi, AsteroidOS, astOS, Astra Linux, Athena, azos, Bedrock, BigLinux, Bitrig, BlackArch,
-# blackPanther, BLAG, BlankOn, BlueLight, Bodhi, bonsai, BSD, BunsenLabs, CachyOS, Calculate,
+# BlackMesa, blackPanther, BLAG, BlankOn, BlueLight, Bodhi, bonsai, BSD, BunsenLabs, CachyOS, Calculate,
 # CalinixOS, Carbs, CBL-Mariner, CelOS, Center, CentOS, Chakra, ChaletOS, Chapeau, Chimera, ChonkySealOS,
 # Chrom, Cleanjaro, Clear Linux OS, ClearOS, Clover, Cobalt, Condres, Container Linux by CoreOS,
 # CRUX, Crystal Linux, Cucumber, CutefishOS, CuteOS, CyberOS, dahlia, DarkOs, Darwin, Debian,
@@ -1584,7 +1584,7 @@ get_model() {
         ;;
 
         "Mac OS X"|"macOS"|"ravynOS")
-            if [ "$(arch)" != "arm64" ] && [[ $(kextstat | grep -F -e "FakeSMC" -e "VirtualSMC" -e "Lilu") != "" ]]; then
+            if [ "$(arch)" != "arm64" ] && [[ $(kextstat | grep -F -e "FakeSMC" -e "VirtualSMC") != "" ]]; then
                 model="Hackintosh (SMBIOS: $(sysctl -n hw.model))"
             else
                 if [[ $osx_version == 10.[4-5]* ]]; then
@@ -5329,10 +5329,10 @@ get_cols() {
         # Convert the spaces into rows of blocks.
         if [ "${BASH_VERSION%%.*}" -lt 5 ]; then
             [[ "$blocks"  ]] && cols+="${block_spaces// /${blocks}[39;49mnl}"
-            [[ "$blocks2" ]] && cols+="${block_spaces// /${blocks2}[39;49mnl}"
+            [[ "$blocks2" ]] && cols+="${block_spaces// /${blocks2}[0mnl}"
         else
             [[ "$blocks"  ]] && cols+="${block_spaces// /${blocks}\[39;49mnl}"
-            [[ "$blocks2" ]] && cols+="${block_spaces// /${blocks2}\[39;49mnl}"
+            [[ "$blocks2" ]] && cols+="${block_spaces// /${blocks2}\[0mnl}"
         fi
 
         # Determine the horizontal offset of the blocks.
@@ -8210,6 +8210,34 @@ ${c2}        .oossssso-`${c3}//${c1}`/ossssss+`
   `+sso+:-`        ${c3}//${c1}       `.-/+oso:
  `++:.             ${c3}//${c1}            `-/+/
  .`                ${c3}/${c1}                `/
+EOF
+        ;;
+
+        "BlackMesa")
+            set_colors 1
+            read -rd '' ascii_data <<'EOF'
+${c1}             
+           .-;+$XHHHHHHX$+;-.
+        ,;X@@X%/;=----=:/%X@@X/,
+      =$@@%=.              .=+H@X:
+    -XMX:                      =XMX=
+   /@@:                          =H@+
+  %@X,                            .$@$
+ +@X.                               $@%
+-@@,                                .@@=
+%@%                                  +@$
+H@:                                  :@H
+H@:         :HHHHHHHHHHHHHHHHHHX,    =@H
+%@%         ;@M@@@@@@@@@@@@@@@@@H-   +@$
+=@@,        :@@@@@@@@@@@@@@@@@@@@@= .@@:
+ +@X        :@@@@@@@@@@@@@@@M@@@@@@:%@%
+  $@$,      ;@@@@@@@@@@@@@@@@@M@@@@@@$.
+   +@@HHHHHHH@@@@@@@@@@@@@@@@@@@@@@@+
+    =X@@@@@@@@@@@@@@@@@@@@@@@@@@@@X=
+      :$@@@@@@@@@@@@@@@@@@@M@@@@$:
+        ,;$@@@@@@@@@@@@@@@@@@X/-
+           .-;+$XXHHHHHX$+;-.
+
 EOF
         ;;
 

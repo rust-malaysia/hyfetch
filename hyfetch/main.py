@@ -210,12 +210,15 @@ def create_config() -> Config:
                 return def_lightness
 
             try:
-                lightness = int(lightness[:-1]) / 100 if lightness.endswith('%') else float(lightness)
+                if lightness.endswith('%') or int(lightness) > 1:
+                    lightness = int(lightness[:-1]) / 100 if lightness.endswith('%') else int(lightness) / 100
+                else:
+                    lightness = float(lightness)
                 assert 0 <= lightness <= 1
                 return lightness
 
             except Exception:
-                printc('&cUnable to parse lightness value, please input it as a decimal or percentage (e.g. 0.5 or 50%)')
+                printc('&cUnable to parse lightness value, please enter a lightness value such as 45%, .45, or 45')
 
     lightness = select_lightness()
     _prs = _prs.set_light_dl(lightness, light_dark)

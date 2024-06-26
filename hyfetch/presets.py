@@ -189,6 +189,17 @@ PRESETS: dict[str, ColorProfile] = {
         '#282828'
     ]),
 
+    # xenogender sourced from https://commons.wikimedia.org/wiki/File:Xenogender_pride_flag.svg
+    'xenogender': ColorProfile([
+        '#FF6692',
+        '#FF9A98',
+        '#FFB883',
+        '#FBFFA8',
+	'#85BCFF',
+	'#9D85FF',
+	'#A510FF'
+    ]),
+
     'agender': ColorProfile([
         '#000000',
         '#BABABA',
