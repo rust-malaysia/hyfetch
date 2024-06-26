@@ -1,0 +1,24 @@
+[package]
+name = "hyfetch"
+version = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+description = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+# ansi_colours = { workspace = true, features = ["rgb"] }
+anyhow = { workspace = true, features = ["std"] }
+bpaf = { workspace = true, features = [] }
+# derive_more = { workspace = true, features = ["std"] }
+env_logger = { workspace = true, features = ["auto-color", "humantime", "unstable-kv"] }
+indexmap = { workspace = true, features = ["std"] }
+log = { workspace = true, features = ["kv"] }
+rgb = { workspace = true, features = [] }
+strum = { workspace = true, features = ["derive", "std"] }
+
+[features]
+default = ["autocomplete"]
+autocomplete = ["bpaf/autocomplete"]
