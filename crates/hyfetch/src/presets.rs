@@ -74,6 +74,7 @@ pub enum Preset {
     Unlabeled2,
     Voidboy,
     Voidgirl,
+    Xenogender,
 }
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
@@ -359,6 +360,10 @@ impl Preset {
             // sourced from: https://gender.fandom.com/wiki/Gendervoid
             Self::Voidgirl => ColorProfile::from_hex_colors(vec![
                 "#180827", "#7A5A8B", "#E09BED", "#7A5A8B", "#180827",
+            ]),
+            // sourced from https://commons.wikimedia.org/wiki/File:Xenogender_pride_flag.svg
+            Self::Xenogender => ColorProfile::from_hex_colors(vec![
+                "#FF6692", "#FF9A98", "#FFB883", "#FBFFA8", "#85BCFF", "#9D85FF", "#A510FF",
             ]),
         })
         .expect("presets should not be invalid")
