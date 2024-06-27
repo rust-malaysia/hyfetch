@@ -6,7 +6,7 @@ use std::process::Command;
 use std::{env, fmt};
 
 use anyhow::{anyhow, Context, Result};
-use log::debug;
+use tracing::debug;
 
 /// Gets the absolute path of the neofetch command.
 pub fn get_command_path() -> Result<PathBuf> {
@@ -44,6 +44,7 @@ pub fn get_command_path() -> Result<PathBuf> {
     Err(anyhow!("neofetch command not found"))
 }
 
+#[tracing::instrument(level = "debug")]
 pub fn get_distro_ascii(distro: Option<String>) -> Result<String> {
     // TODO
 
@@ -52,12 +53,13 @@ pub fn get_distro_ascii(distro: Option<String>) -> Result<String> {
     } else {
         get_distro_name().context("Failed to get distro name")?
     };
-    debug!(distro:% = distro; "resolved distro name");
+    debug!(distro, "resolved distro name");
 
     todo!()
 }
 
 /// Runs neofetch command, returning the piped stdout output.
+#[tracing::instrument(level = "debug")]
 fn run_neofetch_command_piped<S>(args: &[S]) -> Result<String>
 where
     S: AsRef<OsStr> + fmt::Debug,
@@ -67,7 +69,7 @@ where
     let output = command
         .output()
         .context("Failed to execute neofetch as child process")?;
-    debug!(output:?, args:?; "neofetch output");
+    debug!(?output, "neofetch output");
 
     if !output.status.success() {
         let err = if let Some(code) = output.status.code() {
@@ -113,6 +115,7 @@ where
     }
 }
 
+#[tracing::instrument(level = "debug")]
 fn get_distro_name() -> Result<String> {
     run_neofetch_command_piped(&["ascii_distro_name"])
         .context("Failed to get distro name from neofetch")

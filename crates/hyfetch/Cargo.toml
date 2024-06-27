@@ -13,12 +13,12 @@ license = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 bpaf = { workspace = true, features = [] }
 # derive_more = { workspace = true, features = ["std"] }
-env_logger = { workspace = true, features = ["auto-color", "humantime", "unstable-kv"] }
 indexmap = { workspace = true, features = ["std"] }
-log = { workspace = true, features = ["kv"] }
 rgb = { workspace = true, features = [] }
 shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }
+tracing = { workspace = true, features = ["attributes", "std"] }
+tracing-subscriber = { workspace = true, features = ["ansi", "fmt", "smallvec", "std", "tracing-log"] }
 
 [features]
 default = ["autocomplete"]
