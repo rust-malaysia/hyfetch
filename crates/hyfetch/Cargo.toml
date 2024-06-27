@@ -21,5 +21,6 @@ tracing = { workspace = true, features = ["attributes", "std"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt", "smallvec", "std", "tracing-log"] }
 
 [features]
-default = ["autocomplete"]
+default = ["autocomplete", "color"]
 autocomplete = ["bpaf/autocomplete"]
+color = ["bpaf/dull-color"]
