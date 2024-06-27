@@ -7,3 +7,12 @@ pub enum AnsiMode {
     Ansi256,
     Rgb,
 }
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, EnumString, VariantNames)]
+#[strum(serialize_all = "kebab-case")]
+pub enum Backend {
+    Qwqfetch,
+    Neofetch,
+    Fastfetch,
+    FastfetchOld,
+}
