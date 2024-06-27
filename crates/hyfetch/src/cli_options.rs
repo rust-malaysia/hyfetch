@@ -23,7 +23,7 @@ pub struct Options {
     pub colors_use_overlay: bool,
     pub june: bool,
     pub debug: bool,
-    pub test_distro: Option<String>,
+    pub distro: Option<String>,
     pub ascii_file: Option<PathBuf>,
     pub test_print: bool,
     pub ask_exit: bool,
@@ -103,7 +103,7 @@ BACKEND={{{}}}",
         .help("Test for a specific distro")
         .argument("DISTRO")
         .optional();
-    let test_distro = construct!([distro, test_distro]);
+    let distro = construct!([distro, test_distro]);
     let ascii_file = long("ascii-file")
         .help("Use a specific file for the ascii art")
         .argument("ASCII_FILE");
@@ -131,7 +131,7 @@ BACKEND={{{}}}",
         colors_use_overlay,
         june,
         debug,
-        test_distro,
+        distro,
         ascii_file,
         // hidden
         test_print,

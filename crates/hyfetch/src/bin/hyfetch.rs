@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     if options.test_print {
         println!(
             "{}",
-            get_distro_ascii(None).context("Failed to get distro ascii")?
+            get_distro_ascii(options.distro.as_ref()).context("Failed to get distro ascii")?
         );
         return Ok(());
     }

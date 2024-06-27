@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
@@ -44,16 +45,21 @@ pub fn get_command_path() -> Result<PathBuf> {
     Err(anyhow!("neofetch command not found"))
 }
 
+/// Gets the distro ascii of the current distro. Or if distro is specified, get
+/// the specific distro's ascii art instead.
 #[tracing::instrument(level = "debug")]
-pub fn get_distro_ascii(distro: Option<String>) -> Result<String> {
-    // TODO
-
-    let distro = if let Some(distro) = distro {
-        distro
+pub fn get_distro_ascii<S>(distro: Option<S>) -> Result<String>
+where
+    S: AsRef<str> + fmt::Debug,
+{
+    let distro: Cow<_> = if let Some(distro) = distro.as_ref() {
+        distro.as_ref().into()
     } else {
-        get_distro_name().context("Failed to get distro name")?
+        get_distro_name()
+            .context("Failed to get distro name")?
+            .into()
     };
-    debug!(distro, "resolved distro name");
+    debug!(%distro, "distro name");
 
     todo!()
 }
