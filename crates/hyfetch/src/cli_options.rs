@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use anyhow::Context;
 #[cfg(feature = "autocomplete")]
 use bpaf::ShellComp;
 use bpaf::{construct, long, OptionParser, Parser};
@@ -16,7 +17,7 @@ pub struct Options {
     pub preset: Option<Preset>,
     pub mode: Option<AnsiMode>,
     pub backend: Option<Backend>,
-    pub backend_args: Option<String>,
+    pub backend_args: Vec<String>,
     pub colors_scale: Option<f32>,
     pub colors_set_lightness: Option<f32>,
     pub colors_use_overlay: bool,
@@ -47,7 +48,9 @@ PRESET={{{}}}",
         .argument("PRESET");
     #[cfg(feature = "autocomplete")]
     let preset = preset.complete(complete_preset);
-    let preset = preset.parse(|s| Preset::from_str(&s)).optional();
+    let preset = preset
+        .parse(|s| Preset::from_str(&s).with_context(|| format!("Failed to parse preset `{s}`")))
+        .optional();
     let mode = long("mode")
         .short('m')
         .help(&*format!(
@@ -58,7 +61,9 @@ MODE={{{}}}",
         .argument("MODE");
     #[cfg(feature = "autocomplete")]
     let mode = mode.complete(complete_mode);
-    let mode = mode.parse(|s| AnsiMode::from_str(&s)).optional();
+    let mode = mode
+        .parse(|s| AnsiMode::from_str(&s).with_context(|| format!("Failed to parse mode `{s}`")))
+        .optional();
     let backend = long("backend")
         .short('b')
         .help(&*format!(
@@ -69,11 +74,14 @@ BACKEND={{{}}}",
         .argument("BACKEND");
     #[cfg(feature = "autocomplete")]
     let backend = backend.complete(complete_backend);
-    let backend = backend.parse(|s| Backend::from_str(&s)).optional();
+    let backend = backend
+        .parse(|s| Backend::from_str(&s).with_context(|| format!("Failed to parse backend `{s}`")))
+        .optional();
     let backend_args = long("args")
         .help("Additional arguments pass-through to backend")
-        .argument("ARGS")
-        .optional();
+        .argument::<String>("ARGS")
+        .parse(|s| shell_words::split(&s).context("Failed to split args for shell"))
+        .fallback(vec![]);
     let colors_scale = long("c-scale")
         .help("Lighten colors by a multiplier")
         .argument("SCALE")

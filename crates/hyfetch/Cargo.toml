@@ -17,6 +17,7 @@ env_logger = { workspace = true, features = ["auto-color", "humantime", "unstabl
 indexmap = { workspace = true, features = ["std"] }
 log = { workspace = true, features = ["kv"] }
 rgb = { workspace = true, features = [] }
+shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }
 
 [features]
