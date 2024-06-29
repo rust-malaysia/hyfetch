@@ -9,6 +9,8 @@ use std::{env, fmt};
 use anyhow::{anyhow, Context, Result};
 use tracing::debug;
 
+use crate::distros::Distro;
+
 /// Gets the absolute path of the neofetch command.
 pub fn get_command_path() -> Result<PathBuf> {
     if let Ok(workspace_dir) = env::var("CARGO_WORKSPACE_DIR") {
@@ -60,6 +62,10 @@ where
             .into()
     };
     debug!(%distro, "distro name");
+
+    if let Some(distro) = Distro::detect(&distro) {
+        return Ok(distro.ascii_art().to_owned());
+    }
 
     todo!()
 }
