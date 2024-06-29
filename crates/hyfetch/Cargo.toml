@@ -20,6 +20,11 @@ strum = { workspace = true, features = ["derive", "std"] }
 tracing = { workspace = true, features = ["attributes", "std"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt", "smallvec", "std", "tracing-log"] }
 
+[build-dependencies]
+indexmap = { workspace = true, features = ["std"] }
+regex = { workspace = true, features = ["perf", "std", "unicode"] }
+unicode-normalization = { workspace = true, features = ["std"] }
+
 [features]
 default = ["autocomplete", "color"]
 autocomplete = ["bpaf/autocomplete"]
