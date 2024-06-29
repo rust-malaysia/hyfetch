@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use strum::{EnumString, VariantNames};
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, EnumString, VariantNames)]
@@ -15,4 +17,15 @@ pub enum Backend {
     Neofetch,
     Fastfetch,
     FastfetchOld,
+}
+
+pub enum PathOrString {
+    P(Path),
+    S(String)
+}
+
+pub enum ColorAlignMode {
+    Horizontal,
+    Vertical,
+    Custom
 }

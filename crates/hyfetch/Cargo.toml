@@ -21,6 +21,7 @@ shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }
 tracing = { workspace = true, features = ["attributes", "std"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt", "smallvec", "std", "tracing-log"] }
+termion = "*"
 
 [build-dependencies]
 indexmap = { workspace = true, features = ["std"] }

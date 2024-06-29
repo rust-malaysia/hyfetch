@@ -10,6 +10,92 @@ use anyhow::{anyhow, Context, Result};
 use tracing::debug;
 
 use crate::distros::Distro;
+use crate::types::ColorAlignMode;
+use crate::types::PathOrString;
+
+/// Ask the user to provide an input among a list of options
+/// 
+/// prompt: Input prompt
+/// options: Options
+/// default: Default option
+/// show_ops: Show options
+/// return: Selection
+pub fn literal_input<T>(prompt: String, options: impl IntoIterator<Item = String>, default: String, show_ops: bool) -> Result<String, >
+where
+    T: std::iter::Iterator
+{
+    let options = Vec::from_iter(options);
+    
+    if (show_ops) {
+        // let op_text = options.join("|")
+        // TODO: printc function from color_util
+    } else {
+        // TODO: printc function from color_util
+    }
+    let option_text = options.join("|");
+
+    let mut selection = String::new();
+    io::stdin().read_line(&mut selection)?;
+    if (selection.is_empty()) {
+        selection = default;
+    }
+
+    let mut lows = options.into_iter().map(|s| s.to_lowercase());
+
+    loop {
+        let sel = lows
+            .find(|x| x == &selection || x.starts_with(&selection));
+        
+        match sel {
+            None => {
+                println!("Invalid selection! {selection} is not one of {option_text}");
+                io::stdin().read_line(&mut selection)?;
+            },
+            Some(s) => return Ok(s)
+        }
+    }
+}
+
+pub fn term_size() -> io::Result<(u16, u16)> {
+    termion::terminal_size()
+}
+
+/// Get distro ascii width, height ignoring color code
+pub fn ascii_size(asc: String) -> (u16, u16) {
+    todo!()
+    // return (cmp::max(v1), asc.split("\n").clone().count()));
+}
+
+/// Make sure every line are the same width
+pub fn normalize_ascii(asc: String) -> String {
+    let w = ascii_size(asc).0;
+    let lines = asc.split("\n").into_iter().map(|line| format!("{:w}", line));
+    return lines.join("\n");
+}
+
+/// Fill the missing starting placeholders.
+pub fn fill_starting(asc: String) -> String {
+    todo!()
+}
+
+/// Return the file if the file exists, or return none. Useful for chaining 'or's
+pub fn if_file(f: PathOrString) -> Option<Path> {
+    let file = Path::new(f);
+    if file.is_file() {
+        return file;
+    }
+    return None;
+}
+
+struct ColorAlignment {
+    mode: ColorAlignMode
+    custom_colors: HashMap<int, int>
+    fore_back: (u16, u16)
+}
+
+impl ColorAlignment {
+    fn recolor_ascii
+}
 
 /// Gets the absolute path of the neofetch command.
 pub fn get_command_path() -> Result<PathBuf> {
