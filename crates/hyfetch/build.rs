@@ -49,116 +49,118 @@ where
         variants.insert(variant, distro);
     }
 
-    let mut buf = "
+    let mut buf = r###"
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub enum Distro {
-"
+"###
     .to_owned();
 
-    for (variant, distro) in &variants {
+    for (variant, AsciiDistro { pattern, .. }) in &variants {
         buf.push_str(&format!(
-            "
-    // {})
+            r###"
+    // {pattern})
     {variant},
-",
-            distro.pattern
+"###,
         ));
     }
 
     buf.push_str(
-        "
+        r###"
 }
-",
-    );
 
-    buf.push_str(
-        "
 impl Distro {
-    pub fn ascii_art(&self) -> &str {
-        let art = match self {
-",
+    pub fn detect<S>(name: S) -> Option<Self>
+    where
+        S: AsRef<str>,
+    {
+        let name = name.as_ref().to_lowercase();
+"###,
     );
 
-    let quotes = "#".repeat(80);
-    for (variant, distro) in &variants {
-        buf.push_str(&format!(
-            "
-            Self::{variant} => r{quotes}\"
-{}
-\"{quotes},
-",
-            distro.art
-        ));
-    }
+    for (variant, AsciiDistro { pattern, .. }) in &variants {
+        let patterns = pattern.split('|').map(|s| s.trim());
+        let mut conds = vec![];
 
-    buf.push_str(
-        "
-        };
-        &art[1..(art.len() - 1)]
-    }
-}
-",
-    );
+        for m in patterns {
+            let stripped = m.trim_matches(['*', '\'', '"']).to_lowercase();
 
-    buf.push_str(
-        "
-impl Distro {
-    pub fn detect(name: &str) -> Option<Self> {
-",
-    );
-    for (variant, distro) in &variants {
-        let distro_pattern = &distro.pattern;
-        let matches: Vec<&str> = distro_pattern.split('|').map(|s| s.trim()).collect();
-        let mut condition = Vec::new();
-
-        for m in matches {
-            let stripped = m.trim_matches(|c| c == '*' || c == '\'' || c == '"').to_lowercase();
-
-            if stripped.contains('*') || stripped.contains('"') {
-                println!("TODO: Cannot properly parse: {}", m);
+            if stripped.contains(['*', '"']) {
+                if let Some((prefix, suffix)) = stripped.split_once(r#""*""#) {
+                    conds.push(format!(
+                        r###"name.starts_with("{prefix}") && name.ends_with("{suffix}")"###
+                    ));
+                    continue;
+                }
+                println!("cargo:warning=TODO: Cannot properly parse: {m}");
             }
 
             // Exact matches
             if m.trim_matches('*') == m {
-                condition.push(format!("name == r#\"{}\"#", stripped));
+                conds.push(format!(r###"name == "{stripped}""###));
                 continue;
             }
 
             // Both sides are *
             if m.starts_with('*') && m.ends_with('*') {
-                condition.push(format!("(name.starts_with(r#\"{}\"#) || name.ends_with(r#\"{}\"#))", stripped, stripped));
+                conds.push(format!(
+                    r###"name.starts_with("{stripped}") || name.ends_with("{stripped}")"###
+                ));
                 continue;
             }
 
             // Ends with *
             if m.ends_with('*') {
-                condition.push(format!("name.starts_with(r#\"{}\"#)", stripped));
+                conds.push(format!(r###"name.starts_with("{stripped}")"###));
                 continue;
             }
 
             // Starts with *
             if m.starts_with('*') {
-                condition.push(format!("name.ends_with(r#\"{}\"#)", stripped));
+                conds.push(format!(r###"name.ends_with("{stripped}")"###));
                 continue;
             }
         }
 
-        let condition = condition.join(" || ");
-    
-        buf.push_str(&format!("
+        let condition = conds.join(" || ");
+
+        buf.push_str(&format!(
+            r###"
         if {condition} {{
             return Some(Self::{variant});
-        }}"
+        }}
+"###
         ));
-    };
-    buf.push_str(&format!("
-        None
-"
-    ));
-
-    buf.push_str("
     }
-}");
+
+    buf.push_str(
+        r###"
+        None
+    }
+
+    pub fn ascii_art(&self) -> &str {
+        let art = match self {
+"###,
+    );
+
+    let quotes = "#".repeat(80);
+    for (variant, AsciiDistro { art, .. }) in &variants {
+        buf.push_str(&format!(
+            r###"
+            Self::{variant} => r{quotes}"
+{art}
+"{quotes},
+"###,
+        ));
+    }
+
+    buf.push_str(
+        r###"
+        };
+        &art[1..(art.len() - 1)]
+    }
+}
+"###,
+    );
 
     fs::write(out_path.join("distros.rs"), buf).expect("couldn't write distros.rs");
 }
