@@ -9,14 +9,18 @@ repository = { workspace = true }
 license = { workspace = true }
 
 [dependencies]
+ansi_rgb = "0.2.0"
 # ansi_colours = { workspace = true, features = ["rgb"] }
 anyhow = { workspace = true, features = ["std"] }
 bpaf = { workspace = true, features = [] }
+clearscreen = "3.0.0"
 # derive_more = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, features = ["std"] }
 rgb = { workspace = true, features = [] }
 shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }
+term_size = "0.3.2"
+termsize = "0.1.8"
 tracing = { workspace = true, features = ["attributes", "std"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt", "smallvec", "std", "tracing-log"] }
 
