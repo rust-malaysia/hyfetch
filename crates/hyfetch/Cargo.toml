@@ -22,6 +22,7 @@ strum = { workspace = true, features = ["derive", "std"] }
 tracing = { workspace = true, features = ["attributes", "std"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt", "smallvec", "std", "tracing-log"] }
 termion = "*"
+regex.workspace = true
 
 [build-dependencies]
 indexmap = { workspace = true, features = ["std"] }

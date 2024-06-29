@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::PathBuf;
 
 use strum::{EnumString, VariantNames};
 
@@ -20,7 +20,7 @@ pub enum Backend {
 }
 
 pub enum PathOrString {
-    P(Path),
+    P(PathBuf),
     S(String)
 }
 

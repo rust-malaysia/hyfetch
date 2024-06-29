@@ -4,12 +4,15 @@ use std::ffi::OsStr;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::{env, fmt};
+use std::{cmp, env, fmt, io};
+use std::collections::HashMap;
 
 use anyhow::{anyhow, Context, Result};
+use regex::Regex;
 use tracing::debug;
 
 use crate::distros::Distro;
+use crate::presets::ColorProfile;
 use crate::types::ColorAlignMode;
 use crate::types::PathOrString;
 
@@ -61,16 +64,19 @@ pub fn term_size() -> io::Result<(u16, u16)> {
 }
 
 /// Get distro ascii width, height ignoring color code
-pub fn ascii_size(asc: String) -> (u16, u16) {
-    todo!()
-    // return (cmp::max(v1), asc.split("\n").clone().count()));
+pub fn ascii_size(asc: &String) -> Result<(usize, usize)> {
+    let re_neofetch_color = Regex::new("\\${c[0-9]}").unwrap();
+    re_neofetch_color.replace_all(asc, "");
+    let width = asc.split("\n").fold(0, |acc, line| cmp::max(acc, line.len()));
+    let height = asc.split("\n").clone().count();
+    return Ok((width, height));
 }
 
 /// Make sure every line are the same width
 pub fn normalize_ascii(asc: String) -> String {
-    let w = ascii_size(asc).0;
-    let lines = asc.split("\n").into_iter().map(|line| format!("{:w}", line));
-    return lines.join("\n");
+    let width = ascii_size(&asc).unwrap().0;
+    let lines: String = asc.split("\n").into_iter().fold("".to_string(),|acc, line| format!("{}{:width$}\n", acc, line));
+    return lines;
 }
 
 /// Fill the missing starting placeholders.
@@ -79,22 +85,37 @@ pub fn fill_starting(asc: String) -> String {
 }
 
 /// Return the file if the file exists, or return none. Useful for chaining 'or's
-pub fn if_file(f: PathOrString) -> Option<Path> {
-    let file = Path::new(f);
-    if file.is_file() {
-        return file;
+pub fn if_file(f: PathOrString) -> Option<PathBuf> {
+    let file: PathBuf;
+    match f {
+        PathOrString::P(path_buf) => file = path_buf,
+        PathOrString::S(path_string) => file = PathBuf::from(path_string)
+    }
+    if file.as_path().is_file() {
+        return Some(file.to_path_buf());
     }
     return None;
 }
 
 struct ColorAlignment {
-    mode: ColorAlignMode
-    custom_colors: HashMap<int, int>
-    fore_back: (u16, u16)
+    mode: ColorAlignMode,
+    custom_colors: HashMap<u16, u16>,
+    fore_back: Option<(u16, u16)>
 }
 
 impl ColorAlignment {
-    fn recolor_ascii
+    /// Use the color alignment to recolor an ascii art
+    fn recolor_ascii(&self, asc: String, preset: ColorProfile) -> String {
+        let asc = fill_starting(asc);
+
+        match self.mode {
+            ColorAlignMode::Horizontal => {},
+            ColorAlignMode::Vertical => {},
+            ColorAlignMode::Custom => {
+                preset = preset.unique_colors();
+            }
+        }
+    }
 }
 
 /// Gets the absolute path of the neofetch command.
