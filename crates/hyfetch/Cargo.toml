@@ -16,6 +16,7 @@ bpaf = { workspace = true, features = [] }
 chrono = { workspace = true, features = ["clock", "std"] }
 # derive_more = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, features = ["std"] }
+regex = { workspace = true, features = ["perf", "std", "unicode"] }
 rgb = { workspace = true, features = [] }
 shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }

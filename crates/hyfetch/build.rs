@@ -87,7 +87,7 @@ impl Distro {
             if stripped.contains(['*', '"']) {
                 if let Some((prefix, suffix)) = stripped.split_once(r#""*""#) {
                     conds.push(format!(
-                        r###"name.starts_with("{prefix}") && name.ends_with("{suffix}")"###
+                        r#"name.starts_with("{prefix}") && name.ends_with("{suffix}")"#
                     ));
                     continue;
                 }
@@ -96,27 +96,27 @@ impl Distro {
 
             // Exact matches
             if m.trim_matches('*') == m {
-                conds.push(format!(r###"name == "{stripped}""###));
+                conds.push(format!(r#"name == "{stripped}""#));
                 continue;
             }
 
             // Both sides are *
             if m.starts_with('*') && m.ends_with('*') {
                 conds.push(format!(
-                    r###"name.starts_with("{stripped}") || name.ends_with("{stripped}")"###
+                    r#"name.starts_with("{stripped}") || name.ends_with("{stripped}")"#
                 ));
                 continue;
             }
 
             // Ends with *
             if m.ends_with('*') {
-                conds.push(format!(r###"name.starts_with("{stripped}")"###));
+                conds.push(format!(r#"name.starts_with("{stripped}")"#));
                 continue;
             }
 
             // Starts with *
             if m.starts_with('*') {
-                conds.push(format!(r###"name.ends_with("{stripped}")"###));
+                conds.push(format!(r#"name.ends_with("{stripped}")"#));
                 continue;
             }
         }

@@ -7,6 +7,7 @@ use std::process::Command;
 use std::{env, fmt};
 
 use anyhow::{anyhow, Context, Result};
+use regex::Regex;
 use tracing::debug;
 
 use crate::distros::Distro;
@@ -64,10 +65,52 @@ where
     debug!(%distro, "distro name");
 
     if let Some(distro) = Distro::detect(&distro) {
-        return Ok(distro.ascii_art().to_owned());
+        return Ok(normalize_ascii(distro.ascii_art()));
     }
 
     todo!()
+}
+
+/// Gets distro ascii width and height, ignoring color code.
+pub fn ascii_size<S>(asc: S, neofetch_color_re: &Regex) -> (u8, u8)
+where
+    S: AsRef<str>,
+{
+    let asc = asc.as_ref();
+
+    let Some(width) = neofetch_color_re
+        .replace_all(asc, "")
+        .split('\n')
+        .map(|line| line.len())
+        .max()
+    else {
+        unreachable!();
+    };
+    let height = asc.split('\n').count();
+
+    (width as u8, height as u8)
+}
+
+/// Makes sure every line are the same width.
+fn normalize_ascii<S>(asc: S) -> String
+where
+    S: AsRef<str>,
+{
+    let asc = asc.as_ref();
+
+    let neofetch_color_re =
+        Regex::new(r"\$\{c[0-9]\}").expect("neofetch color regex should not be invalid");
+
+    let (w, _) = ascii_size(asc, &neofetch_color_re);
+
+    let mut buf = "".to_owned();
+    for line in asc.split('\n') {
+        let (line_w, _) = ascii_size(line, &neofetch_color_re);
+        let pad = " ".repeat((w - line_w) as usize);
+        buf.push_str(&format!("{line}{pad}\n"))
+    }
+
+    buf
 }
 
 /// Runs neofetch command, returning the piped stdout output.
