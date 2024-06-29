@@ -216,6 +216,10 @@ def detect(name: str) -> AsciiArt | None:
         from .blackarch import blackarch
         return blackarch
     
+    if name == 'blackmesa':
+        from .blackmesa import blackmesa
+        return blackmesa
+    
     if name.startswith('blackpanther') or name.startswith('blackpanther'):
         from .blackpanther import blackpanther
         return blackpanther
@@ -527,6 +531,10 @@ def detect(name: str) -> AsciiArt | None:
     if name.startswith('finnix'):
         from .finnix import finnix
         return finnix
+    
+    if name.startswith('furreto'):
+        from .furreto import furreto
+        return furreto
     
     if name == 'freebsd_small':
         from .freebsd_small import freebsd_small

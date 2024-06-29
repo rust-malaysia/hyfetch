@@ -1,17 +1,19 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
+use std::fs::File;
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::{env, fmt};
+use std::{env, fmt, process};
 
 use anyhow::{anyhow, Context, Result};
 use tracing::debug;
+use pyo3::{Python, PyDict, PyString};
 
 use crate::distros::Distro;
-use crate::types::ColorAlignMode;
-use crate::types::PathOrString;
+use crate::types::{Backend, ColorAlignMode};
 
 /// Ask the user to provide an input among a list of options
 /// 
@@ -79,10 +81,10 @@ pub fn fill_starting(asc: String) -> String {
 }
 
 /// Return the file if the file exists, or return none. Useful for chaining 'or's
-pub fn if_file(f: PathOrString) -> Option<Path> {
-    let file = Path::new(f);
+pub fn if_file(f: &str) -> Option<PathBuf> {
+    let file = PathBuf::from(f);
     if file.is_file() {
-        return file;
+        return Some(file);
     }
     return None;
 }
@@ -210,6 +212,89 @@ where
     #[cfg(windows)]
     {
         todo!()
+    }
+}
+
+fn run_qwqfetch(asc: &str) -> Result<String> {
+    Ok(Python::with_gil(|py| {
+        let locals = PyDict::new_bound(py);
+        py.run_bound(r#"
+        try:
+            import qwqfetch
+            # distro_detector only return a bash variable
+            # so we use qwqfetch builtin distro detector
+            ret = qwqfetch.get_ascres(asc)
+        except ImportError as e:  # module not found etc
+            print("qwqfetch is not installed. Install it by executing:")  # use print to output hint directly
+            print("pip install git+https://github.com/nexplorer-3e/qwqfetch")  # TODO: public repo
+            exit(127)
+        "#, None, None).unwrap();
+        let ret = locals.get_item("ret").unwrap().unwrap();
+        let ret = ret.downcast::<PyString>().unwrap();
+        ret.to_string_lossy().to_owned()
+    }))
+}
+
+fn run_neofetch_rs() -> Result<String> {
+    Ok(neofetch::neofetch())
+}
+
+fn fastfetch_path() -> Option<PathBuf> {
+    which::which("fastfetch").ok()
+        .or(if_file("fastfetch/usr/bin/fastfetch"))
+        .or(if_file("fastfetch/fastfetch"))
+        .or(if_file("fastfetch/fastfetch.exe"))
+}
+
+fn run_fastfetch(asc: &str, args: &str, legacy: bool) -> Result<String> {
+    let Some(ff_path) = fastfetch_path() else {
+        eprintln!("Error: fastfetch binary is not found. Please install fastfetch first.");
+        process::exit(127);
+    };
+
+    // Create a temporary directory
+    let tmp_dir = tempfile::tempdir().expect("Failed to create temporary directory");
+
+    // Define the path for the temporary file
+    let path: PathBuf = tmp_dir.path().join("ascii.txt");
+
+    // Write the ASCII text to the temporary file
+    {
+        let mut file = File::create(&path).expect("Failed to create file");
+        file.write_all(asc.as_bytes()).expect("Failed to write to file");
+    }
+
+    // Prepare the fastfetch command arguments
+    let mut command = Command::new(ff_path);
+    if legacy {
+        command.arg("--raw");
+    } else {
+        command.arg("--file-raw");
+    }
+    command.arg(path.to_str().unwrap());
+    command.args(shlex::split(args).unwrap()); // Assuming you will handle the args parsing similarly
+
+    // Run the fastfetch command
+    let output = command.output().expect("Failed to execute fastfetch");
+
+    // Check the return code and print the error message if needed
+    if output.status.code() == Some(144) {
+        eprintln!("Error code 144 detected: Please upgrade fastfetch to >=1.8.0 or use the 'fastfetch-old' backend");
+    }
+    let out = String::from_utf8(output.stdout)
+        .context("Failed to process neofetch output as it contains invalid UTF-8")?
+        .trim()
+        .to_owned();
+    Ok(out)
+}
+
+fn run(asc: &str, backend: Backend, args: &str) -> Result<String> {
+    match backend {
+        Backend::Qwqfetch => run_qwqfetch(asc),
+        Backend::Neofetch => todo!("run_neofetch_command_piped(args)"),
+        Backend::NeofetchRs => run_neofetch_rs(),
+        Backend::Fastfetch => run_fastfetch(asc, args, false),
+        Backend::FastfetchOld => run_fastfetch(asc, args, true),
     }
 }
 

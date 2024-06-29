@@ -15,6 +15,7 @@ pub enum AnsiMode {
 pub enum Backend {
     Qwqfetch,
     Neofetch,
+    NeofetchRs,
     Fastfetch,
     FastfetchOld,
 }
