@@ -13,6 +13,7 @@ default-run = "hyfetch"
 # ansi_colours = { workspace = true, features = ["rgb"] }
 anyhow = { workspace = true, features = ["std"] }
 bpaf = { workspace = true, features = [] }
+chrono = { workspace = true, features = ["clock", "std"] }
 # derive_more = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, features = ["std"] }
 rgb = { workspace = true, features = [] }

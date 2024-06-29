@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fmt};
 
@@ -11,8 +11,8 @@ use tracing::debug;
 
 /// Gets the absolute path of the neofetch command.
 pub fn get_command_path() -> Result<PathBuf> {
-    if let Some(workspace_dir) = option_env!("CARGO_WORKSPACE_DIR") {
-        let path = PathBuf::from(workspace_dir);
+    if let Ok(workspace_dir) = env::var("CARGO_WORKSPACE_DIR") {
+        let path = Path::new(&workspace_dir);
         if path.exists() {
             let path = path.join("neofetch");
             match path.try_exists() {
