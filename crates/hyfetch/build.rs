@@ -100,6 +100,66 @@ impl Distro {
 ",
     );
 
+    buf.push_str(
+        "
+impl Distro {
+    pub fn detect(name: &str) -> Option<Self> {
+",
+    );
+    for (variant, distro) in &variants {
+        let distro_pattern = &distro.pattern;
+        let matches: Vec<&str> = distro_pattern.split('|').map(|s| s.trim()).collect();
+        let mut condition = Vec::new();
+
+        for m in matches {
+            let stripped = m.trim_matches(|c| c == '*' || c == '\'' || c == '"').to_lowercase();
+
+            if stripped.contains('*') || stripped.contains('"') {
+                println!("TODO: Cannot properly parse: {}", m);
+            }
+
+            // Exact matches
+            if m.trim_matches('*') == m {
+                condition.push(format!("name == r#\"{}\"#", stripped));
+                continue;
+            }
+
+            // Both sides are *
+            if m.starts_with('*') && m.ends_with('*') {
+                condition.push(format!("(name.starts_with(r#\"{}\"#) || name.ends_with(r#\"{}\"#))", stripped, stripped));
+                continue;
+            }
+
+            // Ends with *
+            if m.ends_with('*') {
+                condition.push(format!("name.starts_with(r#\"{}\"#)", stripped));
+                continue;
+            }
+
+            // Starts with *
+            if m.starts_with('*') {
+                condition.push(format!("name.ends_with(r#\"{}\"#)", stripped));
+                continue;
+            }
+        }
+
+        let condition = condition.join(" || ");
+    
+        buf.push_str(&format!("
+        if {condition} {{
+            return Some(Self::{variant});
+        }}"
+        ));
+    };
+    buf.push_str(&format!("
+        None
+"
+    ));
+
+    buf.push_str("
+    }
+}");
+
     fs::write(out_path.join("distros.rs"), buf).expect("couldn't write distros.rs");
 }
 
