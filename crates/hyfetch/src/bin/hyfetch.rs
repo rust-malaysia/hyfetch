@@ -1,4 +1,7 @@
+use std::io::{self, IsTerminal};
+
 use anyhow::{Context, Result};
+use chrono::Datelike;
 use hyfetch::cli_options::options;
 use hyfetch::neofetch_util::get_distro_ascii;
 use tracing::debug;
@@ -18,6 +21,37 @@ fn main() -> Result<()> {
             get_distro_ascii(options.distro.as_ref()).context("Failed to get distro ascii")?
         );
         return Ok(());
+    }
+
+    // TODO
+
+    // TODO
+    // let config = if options.config {
+    //     create_config()
+    // } else {
+    //     check_config(options.config_file)
+    // };
+
+    let now = chrono::Local::now();
+    let show_pride_month = options.june
+        || now.month() == 6
+            // TODO
+            // && !config.pride_month_shown.contains(now.year())
+            // && !june_path.is_file()
+            && io::stdout().is_terminal();
+
+    if show_pride_month
+    // TODO
+    // && !config.pride_month_disable
+    {
+        // TODO
+        // pride_month.start_animation();
+        println!();
+        println!("Happy pride month!");
+        println!("(You can always view the animation again with `hyfetch --june`)");
+        println!();
+
+        // TODO
     }
 
     // TODO
