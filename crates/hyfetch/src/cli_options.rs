@@ -5,6 +5,7 @@ use anyhow::Context;
 #[cfg(feature = "autocomplete")]
 use bpaf::ShellComp;
 use bpaf::{construct, long, OptionParser, Parser};
+use directories::BaseDirs;
 use strum::VariantNames;
 
 use crate::presets::Preset;
@@ -13,11 +14,11 @@ use crate::types::{AnsiMode, Backend};
 #[derive(Clone, Debug)]
 pub struct Options {
     pub config: bool,
-    pub config_file: Option<PathBuf>,
+    pub config_file: PathBuf,
     pub preset: Option<Preset>,
     pub mode: Option<AnsiMode>,
     pub backend: Option<Backend>,
-    pub backend_args: Vec<String>,
+    pub args: Vec<String>,
     pub colors_scale: Option<f32>,
     pub colors_set_lightness: Option<f32>,
     pub colors_use_overlay: bool,
@@ -37,7 +38,16 @@ pub fn options() -> OptionParser<Options> {
         .argument("CONFIG_FILE");
     #[cfg(feature = "autocomplete")]
     let config_file = config_file.complete_shell(ShellComp::Nothing);
-    let config_file = config_file.optional();
+    let config_file = config_file
+        .fallback_with(|| {
+            Ok::<_, anyhow::Error>(
+                BaseDirs::new()
+                    .context("Failed to get base dirs")?
+                    .config_dir()
+                    .join("hyfetch.json"),
+            )
+        })
+        .debug_fallback();
     let preset = long("preset")
         .short('p')
         .help(&*format!(
@@ -49,7 +59,11 @@ PRESET={{{}}}",
     #[cfg(feature = "autocomplete")]
     let preset = preset.complete(complete_preset);
     let preset = preset
-        .parse(|s| Preset::from_str(&s).with_context(|| format!("Failed to parse preset `{s}`")))
+        .parse(|s| {
+            Preset::from_str(&s).with_context(|| {
+                format!("PRESET should be one of {{{}}}", Preset::VARIANTS.join(","))
+            })
+        })
         .optional();
     let mode = long("mode")
         .short('m')
@@ -62,7 +76,11 @@ MODE={{{}}}",
     #[cfg(feature = "autocomplete")]
     let mode = mode.complete(complete_mode);
     let mode = mode
-        .parse(|s| AnsiMode::from_str(&s).with_context(|| format!("Failed to parse mode `{s}`")))
+        .parse(|s| {
+            AnsiMode::from_str(&s).with_context(|| {
+                format!("MODE should be one of {{{}}}", AnsiMode::VARIANTS.join(","))
+            })
+        })
         .optional();
     let backend = long("backend")
         .short('b')
@@ -75,12 +93,19 @@ BACKEND={{{}}}",
     #[cfg(feature = "autocomplete")]
     let backend = backend.complete(complete_backend);
     let backend = backend
-        .parse(|s| Backend::from_str(&s).with_context(|| format!("Failed to parse backend `{s}`")))
+        .parse(|s| {
+            Backend::from_str(&s).with_context(|| {
+                format!(
+                    "BACKEND should be one of {{{}}}",
+                    Backend::VARIANTS.join(",")
+                )
+            })
+        })
         .optional();
-    let backend_args = long("args")
+    let args = long("args")
         .help("Additional arguments pass-through to backend")
         .argument::<String>("ARGS")
-        .parse(|s| shell_words::split(&s).context("Failed to split args for shell"))
+        .parse(|s| shell_words::split(&s).context("ARGS should be valid command-line arguments"))
         .fallback(vec![]);
     let colors_scale = long("c-scale")
         .help("Lighten colors by a multiplier")
@@ -125,7 +150,7 @@ BACKEND={{{}}}",
         preset,
         mode,
         backend,
-        backend_args,
+        args,
         colors_scale,
         colors_set_lightness,
         colors_use_overlay,

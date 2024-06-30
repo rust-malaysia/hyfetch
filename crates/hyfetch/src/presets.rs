@@ -3,11 +3,13 @@ use std::iter;
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexSet;
 use rgb::RGB8;
+use serde::{Deserialize, Serialize};
 use strum::{EnumString, VariantNames};
 
 use crate::color_util::FromHex;
 
-#[derive(Clone, Hash, Debug, EnumString, VariantNames)]
+#[derive(Clone, Hash, Debug, Deserialize, EnumString, Serialize, VariantNames)]
+#[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum Preset {
     Abrosexual,
@@ -44,13 +46,16 @@ pub enum Preset {
     Genderfaun,
     Genderfluid,
     Genderflux,
+    #[serde(rename = "gendernonconforming1")]
     #[strum(serialize = "gendernonconforming1")]
     GenderNonconforming1,
+    #[serde(rename = "gendernonconforming2")]
     #[strum(serialize = "gendernonconforming2")]
     GenderNonconforming2,
     Gendervoid,
     Girlflux,
     Greygender,
+    #[serde(alias = "biromantic2")]
     Greysexual,
     Gynesexual,
     Intergender,
@@ -79,7 +84,7 @@ pub enum Preset {
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ColorProfile {
-    colors: Vec<RGB8>,
+    pub colors: Vec<RGB8>,
 }
 
 impl Preset {
@@ -407,10 +412,6 @@ impl ColorProfile {
         }
 
         Ok(Self::new(weighted_colors))
-    }
-
-    pub fn colors(&self) -> &[RGB8] {
-        &self.colors
     }
 
     /// Creates another color profile with only the unique colors.
