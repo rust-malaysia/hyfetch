@@ -1,13 +1,18 @@
-use std::io::{self, IsTerminal};
+use std::fmt;
+use std::fs::{self, File};
+use std::io::{self, ErrorKind, IsTerminal, Read};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::Datelike;
+use directories::ProjectDirs;
 use hyfetch::cli_options::options;
+use hyfetch::models::Config;
 use hyfetch::neofetch_util::get_distro_ascii;
 use tracing::debug;
 
 fn main() -> Result<()> {
-    let options = options().fallback_to_usage().run();
+    let options = options().run();
 
     init_tracing_subsriber(options.debug).context("Failed to init tracing subscriber")?;
 
@@ -25,25 +30,26 @@ fn main() -> Result<()> {
 
     // TODO
 
-    // TODO
-    // let config = if options.config {
-    //     create_config()
-    // } else {
-    //     check_config(options.config_file)
-    // };
+    let config = if options.config {
+        create_config(options.config_file).context("Failed to create config")?
+    } else if let Some(config) =
+        read_config(&options.config_file).context("Failed to read config")?
+    {
+        config
+    } else {
+        create_config(options.config_file).context("Failed to create config")?
+    };
 
     let now = chrono::Local::now();
-    let show_pride_month = options.june
-        || now.month() == 6
-            // TODO
-            // && !config.pride_month_shown.contains(now.year())
-            // && !june_path.is_file()
-            && io::stdout().is_terminal();
+    let cache_path = ProjectDirs::from("", "", "hyfetch")
+        .context("Failed to get base dirs")?
+        .cache_dir()
+        .to_owned();
+    let june_path = cache_path.join(format!("animation-displayed-{}", now.year()));
+    let show_pride_month =
+        options.june || now.month() == 6 && !june_path.is_file() && io::stdout().is_terminal();
 
-    if show_pride_month
-    // TODO
-    // && !config.pride_month_disable
-    {
+    if show_pride_month && !config.pride_month_disable {
         // TODO
         // pride_month.start_animation();
         println!();
@@ -51,12 +57,61 @@ fn main() -> Result<()> {
         println!("(You can always view the animation again with `hyfetch --june`)");
         println!();
 
-        // TODO
+        if !june_path.is_file() {
+            fs::create_dir_all(cache_path).context("Failed to create cache dir")?;
+            File::create(&june_path)
+                .with_context(|| format!("Failed to create file {june_path:?}"))?;
+        }
     }
 
     // TODO
 
     Ok(())
+}
+
+/// Reads config from file.
+///
+/// Returns `None` if the config file does not exist.
+#[tracing::instrument(level = "debug")]
+fn read_config<P>(path: P) -> Result<Option<Config>>
+where
+    P: AsRef<Path> + fmt::Debug,
+{
+    let path = path.as_ref();
+
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Ok(None);
+        },
+        Err(err) => {
+            return Err(err).with_context(|| format!("Failed to open {path:?}"));
+        },
+    };
+
+    let mut buf = String::new();
+
+    file.read_to_string(&mut buf)
+        .with_context(|| format!("Failed to read {path:?}"))?;
+
+    let deserializer = &mut serde_json::Deserializer::from_str(&buf);
+    let config: Config = serde_path_to_error::deserialize(deserializer)
+        .with_context(|| format!("Failed to parse {path:?}"))?;
+
+    debug!(?config, "read config");
+
+    Ok(Some(config))
+}
+
+/// Creates config interactively.
+///
+/// The config is automatically stored to file.
+#[tracing::instrument(level = "debug")]
+fn create_config<P>(path: P) -> Result<Config>
+where
+    P: AsRef<Path> + fmt::Debug,
+{
+    todo!()
 }
 
 fn init_tracing_subsriber(debug: bool) -> Result<()> {

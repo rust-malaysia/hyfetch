@@ -14,10 +14,15 @@ default-run = "hyfetch"
 anyhow = { workspace = true, features = ["std"] }
 bpaf = { workspace = true, features = [] }
 chrono = { workspace = true, features = ["clock", "std"] }
+deranged = { workspace = true, features = ["serde", "std"] }
 # derive_more = { workspace = true, features = ["std"] }
-indexmap = { workspace = true, features = ["std"] }
+directories = { workspace = true, features = [] }
+indexmap = { workspace = true, features = ["serde", "std"] }
 regex = { workspace = true, features = ["perf", "std", "unicode"] }
 rgb = { workspace = true, features = [] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+serde_path_to_error = { workspace = true, features = [] }
 shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }
 tracing = { workspace = true, features = ["attributes", "std"] }

@@ -4,13 +4,34 @@ use std::ffi::OsStr;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::{env, fmt};
 
 use anyhow::{anyhow, Context, Result};
+use indexmap::IndexMap;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::color_util::{NeofetchAsciiIndexedColor, PresetIndexedColor};
 use crate::distros::Distro;
+
+static NEOFETCH_COLOR_RE: OnceLock<Regex> = OnceLock::new();
+
+#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase", tag = "mode")]
+pub enum ColorAlignment {
+    Horizontal {
+        fore_back: Option<(NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor)>,
+    },
+    Vertical {
+        fore_back: Option<(NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor)>,
+    },
+    Custom {
+        #[serde(rename = "custom_colors")]
+        colors: IndexMap<NeofetchAsciiIndexedColor, PresetIndexedColor>,
+    },
+}
 
 /// Gets the absolute path of the neofetch command.
 pub fn get_command_path() -> Result<PathBuf> {
@@ -72,13 +93,16 @@ where
 }
 
 /// Gets distro ascii width and height, ignoring color code.
-pub fn ascii_size<S>(asc: S, neofetch_color_re: &Regex) -> (u8, u8)
+pub fn ascii_size<S>(asc: S) -> (u8, u8)
 where
     S: AsRef<str>,
 {
     let asc = asc.as_ref();
 
-    let Some(width) = neofetch_color_re
+    let Some(width) = NEOFETCH_COLOR_RE
+        .get_or_init(|| {
+            Regex::new(r"\$\{c[0-9]\}").expect("neofetch color regex should not be invalid")
+        })
         .replace_all(asc, "")
         .split('\n')
         .map(|line| line.len())
@@ -98,14 +122,11 @@ where
 {
     let asc = asc.as_ref();
 
-    let neofetch_color_re =
-        Regex::new(r"\$\{c[0-9]\}").expect("neofetch color regex should not be invalid");
+    let (w, _) = ascii_size(asc);
 
-    let (w, _) = ascii_size(asc, &neofetch_color_re);
-
-    let mut buf = "".to_owned();
+    let mut buf = String::new();
     for line in asc.split('\n') {
-        let (line_w, _) = ascii_size(line, &neofetch_color_re);
+        let (line_w, _) = ascii_size(line);
         let pad = " ".repeat((w - line_w) as usize);
         buf.push_str(&format!("{line}{pad}\n"))
     }

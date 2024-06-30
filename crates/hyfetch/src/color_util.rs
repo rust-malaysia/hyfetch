@@ -1,5 +1,22 @@
 use anyhow::{anyhow, Context, Result};
+use deranged::RangedU8;
 use rgb::RGB8;
+use serde::{Deserialize, Serialize};
+
+/// An indexed color where the color palette is the set of colors used in
+/// neofetch ascii art.
+///
+/// The range of valid values as supported in neofetch is `1`-`6`.
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Deserialize, Serialize)]
+pub struct NeofetchAsciiIndexedColor(RangedU8<1, 6>);
+
+/// An indexed color where the color palette is the set of unique colors in a
+/// preset.
+///
+/// The range of valid values depends on the number of unique colors in a
+/// certain preset.
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Deserialize, Serialize)]
+pub struct PresetIndexedColor(usize);
 
 pub trait FromHex {
     /// Creates color from hex code.
