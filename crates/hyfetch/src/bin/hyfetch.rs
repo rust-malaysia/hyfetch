@@ -5,16 +5,17 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::Datelike;
-use directories::ProjectDirs;
 use hyfetch::cli_options::options;
 use hyfetch::models::Config;
 use hyfetch::neofetch_util::get_distro_ascii;
+use hyfetch::presets::AssignLightness;
+use hyfetch::utils::get_cache_path;
 use tracing::debug;
 
 fn main() -> Result<()> {
     let options = options().run();
 
-    init_tracing_subsriber(options.debug).context("Failed to init tracing subscriber")?;
+    init_tracing_subsriber(options.debug).context("failed to init tracing subscriber")?;
 
     debug!(?options, "CLI options");
 
@@ -23,7 +24,7 @@ fn main() -> Result<()> {
     if options.test_print {
         println!(
             "{}",
-            get_distro_ascii(options.distro.as_ref()).context("Failed to get distro ascii")?
+            get_distro_ascii(options.distro.as_ref()).context("failed to get distro ascii")?
         );
         return Ok(());
     }
@@ -31,20 +32,18 @@ fn main() -> Result<()> {
     // TODO
 
     let config = if options.config {
-        create_config(options.config_file).context("Failed to create config")?
+        create_config(options.config_file).context("failed to create config")?
     } else if let Some(config) =
-        read_config(&options.config_file).context("Failed to read config")?
+        read_config(&options.config_file).context("failed to read config")?
     {
         config
     } else {
-        create_config(options.config_file).context("Failed to create config")?
+        create_config(options.config_file).context("failed to create config")?
     };
 
+    // Check if it's June (pride month)
     let now = chrono::Local::now();
-    let cache_path = ProjectDirs::from("", "", "hyfetch")
-        .context("Failed to get base dirs")?
-        .cache_dir()
-        .to_owned();
+    let cache_path = get_cache_path().context("failed to get cache path")?;
     let june_path = cache_path.join(format!("animation-displayed-{}", now.year()));
     let show_pride_month =
         options.june || now.month() == 6 && !june_path.is_file() && io::stdout().is_terminal();
@@ -58,11 +57,28 @@ fn main() -> Result<()> {
         println!();
 
         if !june_path.is_file() {
-            fs::create_dir_all(cache_path).context("Failed to create cache dir")?;
+            fs::create_dir_all(cache_path).context("failed to create cache dir")?;
             File::create(&june_path)
-                .with_context(|| format!("Failed to create file {june_path:?}"))?;
+                .with_context(|| format!("failed to create file {june_path:?}"))?;
         }
     }
+
+    // TODO
+
+    // Get preset
+    let preset = options.preset.unwrap_or(config.preset);
+    let color_profile = preset.color_profile();
+    debug!(?color_profile, "color profile");
+
+    // Lighten
+    let color_profile = if let Some(scale) = options.scale {
+        color_profile.lighten(scale)
+    } else if let Some(lightness) = options.lightness {
+        color_profile.with_lightness(AssignLightness::Replace(lightness))
+    } else {
+        color_profile.with_lightness_dl(config.lightness(), config.light_dark)
+    };
+    debug!(?color_profile, "lightened color profile");
 
     // TODO
 
@@ -85,18 +101,18 @@ where
             return Ok(None);
         },
         Err(err) => {
-            return Err(err).with_context(|| format!("Failed to open {path:?}"));
+            return Err(err).with_context(|| format!("failed to open {path:?}"));
         },
     };
 
     let mut buf = String::new();
 
     file.read_to_string(&mut buf)
-        .with_context(|| format!("Failed to read {path:?}"))?;
+        .with_context(|| format!("failed to read {path:?}"))?;
 
     let deserializer = &mut serde_json::Deserializer::from_str(&buf);
     let config: Config = serde_path_to_error::deserialize(deserializer)
-        .with_context(|| format!("Failed to parse {path:?}"))?;
+        .with_context(|| format!("failed to parse {path:?}"))?;
 
     debug!(?config, "read config");
 
@@ -158,5 +174,5 @@ fn init_tracing_subsriber(debug: bool) -> Result<()> {
 
     subscriber
         .try_init()
-        .context("Failed to set the global default subscriber")
+        .context("failed to set the global default subscriber")
 }

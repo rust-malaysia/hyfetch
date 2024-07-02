@@ -2,13 +2,16 @@ use std::iter;
 
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexSet;
-use rgb::RGB8;
+use palette::encoding::{self, Linear};
+use palette::num::ClampAssign;
+use palette::{Hsl, IntoColorMut, LinSrgb, Srgb};
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, VariantNames};
 
-use crate::color_util::FromHex;
+use crate::color_util::Lightness;
+use crate::types::LightDark;
 
-#[derive(Clone, Hash, Debug, Deserialize, EnumString, Serialize, VariantNames)]
+#[derive(Copy, Clone, Hash, Debug, Deserialize, EnumString, Serialize, VariantNames)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum Preset {
@@ -82,9 +85,16 @@ pub enum Preset {
     Xenogender,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ColorProfile {
-    pub colors: Vec<RGB8>,
+    pub colors: Vec<Srgb<u8>>,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum AssignLightness {
+    Replace(Lightness),
+    ClampMax(Lightness),
+    ClampMin(Lightness),
 }
 
 impl Preset {
@@ -376,7 +386,7 @@ impl Preset {
 }
 
 impl ColorProfile {
-    pub fn new(colors: Vec<RGB8>) -> Self {
+    pub fn new(colors: Vec<Srgb<u8>>) -> Self {
         Self { colors }
     }
 
@@ -386,9 +396,9 @@ impl ColorProfile {
     {
         let colors = hex_colors
             .into_iter()
-            .map(RGB8::from_hex)
-            .collect::<Result<_>>()
-            .context("Failed to parse hex colors")?;
+            .map(|s| s.as_ref().parse())
+            .collect::<Result<_, _>>()
+            .context("failed to parse hex colors")?;
         Ok(Self::new(colors))
     }
 
@@ -414,12 +424,79 @@ impl ColorProfile {
         Ok(Self::new(weighted_colors))
     }
 
+    /// Creates a new color profile, with the colors lightened by a multiplier.
+    pub fn lighten(&self, multiplier: f32) -> Self {
+        let mut rgb_f32_colors: Vec<LinSrgb> =
+            self.colors.iter().map(|c| c.into_linear()).collect();
+
+        {
+            let hsl_f32_colors: &mut [Hsl<Linear<encoding::Srgb>>] =
+                &mut rgb_f32_colors.into_color_mut();
+
+            for hsl_f32_color in hsl_f32_colors {
+                hsl_f32_color.lightness *= multiplier;
+            }
+        }
+
+        let rgb_u8_colors: Vec<_> = rgb_f32_colors
+            .into_iter()
+            .map(Srgb::<u8>::from_linear)
+            .collect();
+
+        Self {
+            colors: rgb_u8_colors,
+        }
+    }
+
+    /// Creates a new color profile, with the colors set to the specified HSL
+    /// lightness value.
+    pub fn with_lightness(&self, assign_lightness: AssignLightness) -> Self {
+        let mut rgb_f32_colors: Vec<_> =
+            self.colors.iter().map(|c| c.into_format::<f32>()).collect();
+
+        {
+            let hsl_f32_colors: &mut [Hsl] = &mut rgb_f32_colors.into_color_mut();
+
+            for hsl_f32_color in hsl_f32_colors {
+                match assign_lightness {
+                    AssignLightness::Replace(lightness) => {
+                        hsl_f32_color.lightness = lightness.into();
+                    },
+                    AssignLightness::ClampMax(lightness) => {
+                        hsl_f32_color.lightness.clamp_max_assign(lightness.into());
+                    },
+                    AssignLightness::ClampMin(lightness) => {
+                        hsl_f32_color.lightness.clamp_min_assign(lightness.into());
+                    },
+                }
+            }
+        }
+
+        let rgb_u8_colors: Vec<_> = rgb_f32_colors
+            .into_iter()
+            .map(|c| c.into_format::<u8>())
+            .collect();
+
+        Self {
+            colors: rgb_u8_colors,
+        }
+    }
+
+    /// Creates a new color profile, with the colors set to the specified HSL
+    /// lightness value, with respect to dark/light terminals.
+    pub fn with_lightness_dl(&self, lightness: Lightness, term: LightDark) -> Self {
+        match term {
+            LightDark::Dark => self.with_lightness(AssignLightness::ClampMin(lightness)),
+            LightDark::Light => self.with_lightness(AssignLightness::ClampMax(lightness)),
+        }
+    }
+
     /// Creates another color profile with only the unique colors.
     pub fn unique_colors(&self) -> Self {
-        let unique_colors = self.colors.iter().collect::<IndexSet<_>>();
+        let unique_colors: IndexSet<[u8; 3]> = self.colors.iter().map(|c| (*c).into()).collect();
         let unique_colors = {
             let mut v = Vec::with_capacity(unique_colors.len());
-            v.extend(unique_colors);
+            v.extend(unique_colors.into_iter().map(Srgb::<u8>::from));
             v
         };
         Self::new(unique_colors)

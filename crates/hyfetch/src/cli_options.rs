@@ -8,6 +8,7 @@ use bpaf::{construct, long, OptionParser, Parser};
 use directories::BaseDirs;
 use strum::VariantNames;
 
+use crate::color_util::Lightness;
 use crate::presets::Preset;
 use crate::types::{AnsiMode, Backend};
 
@@ -19,9 +20,9 @@ pub struct Options {
     pub mode: Option<AnsiMode>,
     pub backend: Option<Backend>,
     pub args: Vec<String>,
-    pub colors_scale: Option<f32>,
-    pub colors_set_lightness: Option<f32>,
-    pub colors_use_overlay: bool,
+    pub scale: Option<f32>,
+    pub lightness: Option<Lightness>,
+    pub overlay: bool,
     pub june: bool,
     pub debug: bool,
     pub distro: Option<String>,
@@ -42,7 +43,7 @@ pub fn options() -> OptionParser<Options> {
         .fallback_with(|| {
             Ok::<_, anyhow::Error>(
                 BaseDirs::new()
-                    .context("Failed to get base dirs")?
+                    .context("failed to get base dirs")?
                     .config_dir()
                     .join("hyfetch.json"),
             )
@@ -107,15 +108,15 @@ BACKEND={{{}}}",
         .argument::<String>("ARGS")
         .parse(|s| shell_words::split(&s).context("ARGS should be valid command-line arguments"))
         .fallback(vec![]);
-    let colors_scale = long("c-scale")
+    let scale = long("c-scale")
         .help("Lighten colors by a multiplier")
         .argument("SCALE")
         .optional();
-    let colors_set_lightness = long("c-set-l")
+    let lightness = long("c-set-l")
         .help("Set lightness value of the colors")
-        .argument("LIGHT")
+        .argument("LIGHTNESS")
         .optional();
-    let colors_use_overlay = long("c-overlay")
+    let overlay = long("c-overlay")
         .help("Use experimental overlay color adjusting instead of HSL lightness")
         .switch();
     let june = long("june").help("Show pride month easter egg").switch();
@@ -151,9 +152,9 @@ BACKEND={{{}}}",
         mode,
         backend,
         args,
-        colors_scale,
-        colors_set_lightness,
-        colors_use_overlay,
+        scale,
+        lightness,
+        overlay,
         june,
         debug,
         distro,
