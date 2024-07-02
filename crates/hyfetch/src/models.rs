@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::color_util::Lightness;
 use crate::neofetch_util::ColorAlignment;
 use crate::presets::Preset;
 use crate::types::{AnsiMode, Backend, LightDark};
@@ -9,13 +10,27 @@ pub struct Config {
     pub preset: Preset,
     pub mode: AnsiMode,
     pub light_dark: LightDark,
-    pub lightness: Option<f32>,
+    lightness: Option<Lightness>,
     pub color_align: ColorAlignment,
     pub backend: Backend,
     #[serde(with = "self::args_serde_with")]
     pub args: Vec<String>,
     pub distro: Option<String>,
     pub pride_month_disable: bool,
+}
+
+impl Config {
+    pub fn default_lightness(term: &LightDark) -> Lightness {
+        match term {
+            LightDark::Dark => Lightness::new(0.65).unwrap(),
+            LightDark::Light => Lightness::new(0.4).unwrap(),
+        }
+    }
+
+    pub fn lightness(&self) -> Lightness {
+        self.lightness
+            .unwrap_or_else(|| Self::default_lightness(&self.light_dark))
+    }
 }
 
 mod args_serde_with {

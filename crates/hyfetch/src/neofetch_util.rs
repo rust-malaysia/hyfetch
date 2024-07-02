@@ -16,6 +16,7 @@ use tracing::debug;
 use crate::color_util::{NeofetchAsciiIndexedColor, PresetIndexedColor};
 use crate::distros::Distro;
 
+const NEOFETCH_COLOR_PATTERN: &str = r"\$\{c[0-9]\}";
 static NEOFETCH_COLOR_RE: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
@@ -41,14 +42,14 @@ pub fn get_command_path() -> Result<PathBuf> {
             let path = path.join("neofetch");
             match path.try_exists() {
                 Ok(true) => {
-                    return path.canonicalize().context("Failed to canonicalize path");
+                    return path.canonicalize().context("failed to canonicalize path");
                 },
                 Ok(false) => {
                     Err(anyhow!("{path:?} does not exist or is not readable"))?;
                 },
                 Err(err) => {
                     Err(err)
-                        .with_context(|| format!("Failed to check for existence of {path:?}"))?;
+                        .with_context(|| format!("failed to check for existence of {path:?}"))?;
                 },
             }
         }
@@ -63,7 +64,7 @@ pub fn get_command_path() -> Result<PathBuf> {
         if !path.is_file() {
             continue;
         }
-        return path.canonicalize().context("Failed to canonicalize path");
+        return path.canonicalize().context("failed to canonicalize path");
     }
 
     Err(anyhow!("neofetch command not found"))
@@ -80,7 +81,7 @@ where
         distro.as_ref().into()
     } else {
         get_distro_name()
-            .context("Failed to get distro name")?
+            .context("failed to get distro name")?
             .into()
     };
     debug!(%distro, "distro name");
@@ -101,7 +102,7 @@ where
 
     let Some(width) = NEOFETCH_COLOR_RE
         .get_or_init(|| {
-            Regex::new(r"\$\{c[0-9]\}").expect("neofetch color regex should not be invalid")
+            Regex::new(NEOFETCH_COLOR_PATTERN).expect("neofetch color regex should not be invalid")
         })
         .replace_all(asc, "")
         .split('\n')
@@ -140,11 +141,11 @@ fn run_neofetch_command_piped<S>(args: &[S]) -> Result<String>
 where
     S: AsRef<OsStr> + fmt::Debug,
 {
-    let mut command = make_neofetch_command(args).context("Failed to make neofetch command")?;
+    let mut command = make_neofetch_command(args).context("failed to make neofetch command")?;
 
     let output = command
         .output()
-        .context("Failed to execute neofetch as child process")?;
+        .context("failed to execute neofetch as child process")?;
     debug!(?output, "neofetch output");
 
     if !output.status.success() {
@@ -168,7 +169,7 @@ where
     }
 
     let out = String::from_utf8(output.stdout)
-        .context("Failed to process neofetch output as it contains invalid UTF-8")?
+        .context("failed to process neofetch output as it contains invalid UTF-8")?
         .trim()
         .to_owned();
     Ok(out)
@@ -181,7 +182,7 @@ where
     #[cfg(not(windows))]
     {
         let mut command = Command::new("bash");
-        command.arg(get_command_path().context("Failed to get neofetch command path")?);
+        command.arg(get_command_path().context("failed to get neofetch command path")?);
         command.args(args);
         Ok(command)
     }
@@ -194,5 +195,5 @@ where
 #[tracing::instrument(level = "debug")]
 fn get_distro_name() -> Result<String> {
     run_neofetch_command_piped(&["ascii_distro_name"])
-        .context("Failed to get distro name from neofetch")
+        .context("failed to get distro name from neofetch")
 }
