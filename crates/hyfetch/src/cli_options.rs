@@ -19,7 +19,7 @@ pub struct Options {
     pub preset: Option<Preset>,
     pub mode: Option<AnsiMode>,
     pub backend: Option<Backend>,
-    pub args: Vec<String>,
+    pub args: Option<Vec<String>>,
     pub scale: Option<f32>,
     pub lightness: Option<Lightness>,
     pub overlay: bool,
@@ -107,7 +107,7 @@ BACKEND={{{}}}",
         .help("Additional arguments pass-through to backend")
         .argument::<String>("ARGS")
         .parse(|s| shell_words::split(&s).context("ARGS should be valid command-line arguments"))
-        .fallback(vec![]);
+        .optional();
     let scale = long("c-scale")
         .help("Lighten colors by a multiplier")
         .argument("SCALE")
