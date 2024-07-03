@@ -15,12 +15,15 @@ use tracing::debug;
 
 use crate::color_util::{NeofetchAsciiIndexedColor, PresetIndexedColor};
 use crate::distros::Distro;
+use crate::presets::ColorProfile;
+use crate::types::{AnsiMode, Backend, LightDark};
 
-const NEOFETCH_COLOR_PATTERN: &str = r"\$\{c[0-9]\}";
+const NEOFETCH_COLOR_PATTERN: &str = r"\$\{c[0-6]\}";
 static NEOFETCH_COLOR_RE: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase", tag = "mode")]
+#[serde(tag = "mode")]
+#[serde(rename_all = "lowercase")]
 pub enum ColorAlignment {
     Horizontal {
         fore_back: Option<(NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor)>,
@@ -32,6 +35,19 @@ pub enum ColorAlignment {
         #[serde(rename = "custom_colors")]
         colors: IndexMap<NeofetchAsciiIndexedColor, PresetIndexedColor>,
     },
+}
+
+impl ColorAlignment {
+    /// Uses the color alignment to recolor an ascii art.
+    pub fn recolor_ascii(
+        &self,
+        asc: String,
+        color_profile: ColorProfile,
+        color_mode: AnsiMode,
+        term: LightDark,
+    ) -> String {
+        todo!()
+    }
 }
 
 /// Gets the absolute path of the neofetch command.
@@ -93,6 +109,10 @@ where
     todo!()
 }
 
+pub fn run(asc: String, backend: Backend, args: Option<&Vec<String>>) -> Result<()> {
+    todo!()
+}
+
 /// Gets distro ascii width and height, ignoring color code.
 pub fn ascii_size<S>(asc: S) -> (u8, u8)
 where
@@ -101,9 +121,7 @@ where
     let asc = asc.as_ref();
 
     let Some(width) = NEOFETCH_COLOR_RE
-        .get_or_init(|| {
-            Regex::new(NEOFETCH_COLOR_PATTERN).expect("neofetch color regex should not be invalid")
-        })
+        .get_or_init(|| Regex::new(NEOFETCH_COLOR_PATTERN).unwrap())
         .replace_all(asc, "")
         .split('\n')
         .map(|line| line.len())

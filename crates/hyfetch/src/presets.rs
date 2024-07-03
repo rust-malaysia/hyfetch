@@ -484,7 +484,16 @@ impl ColorProfile {
 
     /// Creates a new color profile, with the colors set to the specified HSL
     /// lightness value, with respect to dark/light terminals.
-    pub fn with_lightness_dl(&self, lightness: Lightness, term: LightDark) -> Self {
+    pub fn with_lightness_dl(
+        &self,
+        lightness: Lightness,
+        term: LightDark,
+        use_overlay: bool,
+    ) -> Self {
+        if use_overlay {
+            todo!()
+        }
+
         match term {
             LightDark::Dark => self.with_lightness(AssignLightness::ClampMin(lightness)),
             LightDark::Light => self.with_lightness(AssignLightness::ClampMax(lightness)),

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use chrono::Datelike;
 use hyfetch::cli_options::options;
 use hyfetch::models::Config;
-use hyfetch::neofetch_util::get_distro_ascii;
+use hyfetch::neofetch_util::{self, get_distro_ascii};
 use hyfetch::presets::AssignLightness;
 use hyfetch::utils::get_cache_path;
 use tracing::debug;
@@ -21,10 +21,15 @@ fn main() -> Result<()> {
 
     // TODO
 
+    // Use a custom distro
+    let distro = options.distro.as_ref();
+
+    // TODO
+
     if options.test_print {
         println!(
             "{}",
-            get_distro_ascii(options.distro.as_ref()).context("failed to get distro ascii")?
+            get_distro_ascii(distro).context("failed to get distro ascii")?
         );
         return Ok(());
     }
@@ -63,7 +68,12 @@ fn main() -> Result<()> {
         }
     }
 
-    // TODO
+    // Use a custom distro
+    let distro = options.distro.as_ref().or(config.distro.as_ref());
+
+    let color_mode = options.mode.unwrap_or(config.mode);
+    let backend = options.backend.unwrap_or(config.backend);
+    let args = options.args.as_ref().or(config.args.as_ref());
 
     // Get preset
     let preset = options.preset.unwrap_or(config.preset);
@@ -76,11 +86,27 @@ fn main() -> Result<()> {
     } else if let Some(lightness) = options.lightness {
         color_profile.with_lightness(AssignLightness::Replace(lightness))
     } else {
-        color_profile.with_lightness_dl(config.lightness(), config.light_dark)
+        color_profile.with_lightness_dl(config.lightness(), config.light_dark, options.overlay)
     };
     debug!(?color_profile, "lightened color profile");
 
-    // TODO
+    let asc = if let Some(path) = options.ascii_file {
+        fs::read_to_string(&path).with_context(|| format!("failed to read ascii from {path:?}"))?
+    } else {
+        get_distro_ascii(distro).context("failed to get distro ascii")?
+    };
+    let asc = config
+        .color_align
+        .recolor_ascii(asc, color_profile, color_mode, config.light_dark);
+    neofetch_util::run(asc, backend, args).context("failed to run")?;
+
+    if options.ask_exit {
+        print!("Press any key to exit...");
+        let mut buf = String::new();
+        io::stdin()
+            .read_line(&mut buf)
+            .context("failed to read line from input")?;
+    }
 
     Ok(())
 }

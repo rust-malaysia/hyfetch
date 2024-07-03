@@ -13,8 +13,9 @@ pub struct Config {
     lightness: Option<Lightness>,
     pub color_align: ColorAlignment,
     pub backend: Backend,
+    #[serde(default)]
     #[serde(with = "self::args_serde_with")]
-    pub args: Vec<String>,
+    pub args: Option<Vec<String>>,
     pub distro: Option<String>,
     pub pride_month_disable: bool,
 }
@@ -39,31 +40,32 @@ mod args_serde_with {
     use serde::de::{self, value, Deserialize, Deserializer, SeqAccess, Visitor};
     use serde::ser::Serializer;
 
-    pub(super) fn serialize<S>(value: &Vec<String>, serializer: S) -> Result<S::Ok, S::Error>
+    pub(super) fn serialize<S>(
+        value: &Option<Vec<String>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_str(&shell_words::join(value))
+        match value {
+            Some(value) => serializer.serialize_some(&shell_words::join(value)),
+            None => serializer.serialize_none(),
+        }
     }
 
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
     where
         D: Deserializer<'de>,
     {
         struct StringOrVec;
+
+        struct OptionVisitor;
 
         impl<'de> Visitor<'de> for StringOrVec {
             type Value = Vec<String>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("string or list of strings")
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(vec![])
             }
 
             fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
@@ -81,6 +83,38 @@ mod args_serde_with {
             }
         }
 
-        deserializer.deserialize_any(StringOrVec)
+        impl<'de> Visitor<'de> for OptionVisitor {
+            type Value = Option<Vec<String>>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("option")
+            }
+
+            #[inline]
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(None)
+            }
+
+            #[inline]
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(None)
+            }
+
+            #[inline]
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserializer.deserialize_any(StringOrVec).map(Some)
+            }
+        }
+
+        deserializer.deserialize_option(OptionVisitor)
     }
 }
