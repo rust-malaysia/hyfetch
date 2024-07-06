@@ -23,8 +23,12 @@ pub struct Config {
 impl Config {
     pub fn default_lightness(term: &LightDark) -> Lightness {
         match term {
-            LightDark::Dark => Lightness::new(0.65).unwrap(),
-            LightDark::Light => Lightness::new(0.4).unwrap(),
+            LightDark::Dark => {
+                Lightness::new(0.65).expect("default lightness should not be invalid")
+            },
+            LightDark::Light => {
+                Lightness::new(0.4).expect("default lightness should not be invalid")
+            },
         }
     }
 

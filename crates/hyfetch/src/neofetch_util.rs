@@ -1,25 +1,29 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::sync::OnceLock;
-use std::{env, fmt};
+use std::{env, fmt, iter};
 
+use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 use tracing::debug;
 
-use crate::color_util::{NeofetchAsciiIndexedColor, PresetIndexedColor};
+use crate::color_util::{
+    color, ForegroundBackground, NeofetchAsciiIndexedColor, PresetIndexedColor, ToAnsiString,
+};
 use crate::distros::Distro;
 use crate::presets::ColorProfile;
 use crate::types::{AnsiMode, Backend, LightDark};
 
-const NEOFETCH_COLOR_PATTERN: &str = r"\$\{c[0-6]\}";
-static NEOFETCH_COLOR_RE: OnceLock<Regex> = OnceLock::new();
+const NEOFETCH_COLOR_PATTERNS: [&str; 6] = ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
+static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
 #[serde(tag = "mode")]
@@ -39,14 +43,101 @@ pub enum ColorAlignment {
 
 impl ColorAlignment {
     /// Uses the color alignment to recolor an ascii art.
+    #[tracing::instrument(level = "debug")]
     pub fn recolor_ascii(
         &self,
         asc: String,
         color_profile: ColorProfile,
         color_mode: AnsiMode,
         term: LightDark,
-    ) -> String {
-        todo!()
+    ) -> Result<String> {
+        let asc = fill_starting(asc).context("failed to fill in starting neofetch color codes")?;
+
+        let reset = color("&~&*", color_mode).expect("color reset should not be invalid");
+
+        let asc = match self {
+            Self::Horizontal {
+                fore_back: Some((fore, back)),
+            }
+            | Self::Vertical {
+                fore_back: Some((fore, back)),
+            } => {
+                let fore: u8 = (*fore).into();
+                let back: u8 = (*back).into();
+
+                // Replace foreground colors
+                let asc = asc.replace(
+                    &format!("${{c{fore}}}"),
+                    &color(
+                        match term {
+                            LightDark::Light => "&0",
+                            LightDark::Dark => "&f",
+                        },
+                        color_mode,
+                    )
+                    .expect("foreground color should not be invalid"),
+                );
+
+                let lines: Vec<_> = asc.split('\n').collect();
+
+                // Add new colors
+                let asc = match self {
+                    Self::Horizontal { .. } => {
+                        let length = lines.len();
+                        let length: u8 = length.try_into().expect("`length` should fit in `u8`");
+                        let ColorProfile { colors } = color_profile
+                            .with_length(length)
+                            .context("failed to spread color profile to length")?;
+                        let mut asc = String::new();
+                        for (i, line) in lines.into_iter().enumerate() {
+                            let line = line.replace(
+                                &format!("${{c{back}}}"),
+                                &colors[i].to_ansi_string(color_mode, {
+                                    // note: this is "background" in the ascii art, but foreground
+                                    // text in terminal
+                                    ForegroundBackground::Foreground
+                                }),
+                            );
+                            asc.push_str(&line);
+                            asc.push_str(&reset);
+                            asc.push('\n');
+                        }
+                        asc
+                    },
+                    Self::Vertical { .. } => {
+                        unimplemented!(
+                            "vertical color alignment with fore and back colors not implemented"
+                        );
+                    },
+                    _ => {
+                        unreachable!();
+                    },
+                };
+
+                // Remove existing colors
+                let asc = {
+                    let ac = NEOFETCH_COLORS_AC
+                        .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+                    const N: usize = NEOFETCH_COLOR_PATTERNS.len();
+                    let replacements: [&str; N] = iter::repeat("")
+                        .take(N)
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .unwrap();
+                    ac.replace_all(&asc, &replacements)
+                };
+
+                asc
+            },
+            Self::Horizontal { fore_back: None } | Self::Vertical { fore_back: None } => {
+                todo!()
+            },
+            Self::Custom { colors } => {
+                todo!()
+            },
+        };
+
+        Ok(asc)
     }
 }
 
@@ -109,8 +200,24 @@ where
     todo!()
 }
 
+#[tracing::instrument(level = "debug")]
 pub fn run(asc: String, backend: Backend, args: Option<&Vec<String>>) -> Result<()> {
-    todo!()
+    match backend {
+        Backend::Neofetch => {
+            run_neofetch(asc, args).context("failed to run neofetch")?;
+        },
+        Backend::Fastfetch => {
+            todo!();
+        },
+        Backend::FastfetchOld => {
+            todo!();
+        },
+        Backend::Qwqfetch => {
+            todo!();
+        },
+    }
+
+    Ok(())
 }
 
 /// Gets distro ascii width and height, ignoring color code.
@@ -120,18 +227,26 @@ where
 {
     let asc = asc.as_ref();
 
-    let Some(width) = NEOFETCH_COLOR_RE
-        .get_or_init(|| Regex::new(NEOFETCH_COLOR_PATTERN).unwrap())
-        .replace_all(asc, "")
-        .split('\n')
-        .map(|line| line.len())
-        .max()
-    else {
+    let asc = {
+        let ac =
+            NEOFETCH_COLORS_AC.get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+        const N: usize = NEOFETCH_COLOR_PATTERNS.len();
+        let replacements: [&str; N] = iter::repeat("")
+            .take(N)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        ac.replace_all(asc, &replacements)
+    };
+
+    let Some(width) = asc.split('\n').map(|line| line.len()).max() else {
         unreachable!();
     };
+    let width: u8 = width.try_into().expect("`width` should fit in `u8`");
     let height = asc.split('\n').count();
+    let height: u8 = height.try_into().expect("`height` should fit in `u8`");
 
-    (width as u8, height as u8)
+    (width, height)
 }
 
 /// Makes sure every line are the same width.
@@ -146,11 +261,67 @@ where
     let mut buf = String::new();
     for line in asc.split('\n') {
         let (line_w, _) = ascii_size(line);
+        buf.push_str(line);
         let pad = " ".repeat((w - line_w) as usize);
-        buf.push_str(&format!("{line}{pad}\n"))
+        buf.push_str(&pad);
+        buf.push('\n');
     }
 
     buf
+}
+
+/// Fills the missing starting placeholders.
+///
+/// e.g. `"${c1}...\n..."` -> `"${c1}...\n${c1}..."`
+fn fill_starting<S>(asc: S) -> Result<String>
+where
+    S: AsRef<str>,
+{
+    let asc = asc.as_ref();
+
+    let ac = NEOFETCH_COLORS_AC.get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+
+    let mut new = String::new();
+    let mut last = None;
+    for line in asc.split('\n') {
+        let mut matches = ac.find_iter(line).peekable();
+
+        match matches.peek() {
+            Some(m) if m.start() == 0 => {
+                // line starts with neofetch color code, do nothing
+            },
+            _ => {
+                new.push_str(last.ok_or_else(|| {
+                    anyhow!("failed to find neofetch color code from a previous line")
+                })?);
+            },
+        }
+        new.push_str(line);
+        new.push('\n');
+
+        // Get the last placeholder for the next line
+        if let Some(m) = matches.last() {
+            last = Some(&line[m.span()])
+        }
+    }
+
+    Ok(new)
+}
+
+/// Runs neofetch command.
+#[tracing::instrument(level = "debug")]
+fn run_neofetch_command<S>(args: &[S]) -> Result<()>
+where
+    S: AsRef<OsStr> + fmt::Debug,
+{
+    let mut command = make_neofetch_command(args).context("failed to make neofetch command")?;
+
+    let status = command
+        .status()
+        .context("failed to execute neofetch command as child process")?;
+    process_command_status(&status).context("neofetch command exited with error")?;
+
+    Ok(())
 }
 
 /// Runs neofetch command, returning the piped stdout output.
@@ -165,26 +336,7 @@ where
         .output()
         .context("failed to execute neofetch as child process")?;
     debug!(?output, "neofetch output");
-
-    if !output.status.success() {
-        let err = if let Some(code) = output.status.code() {
-            anyhow!("neofetch process exited with status code: {code}")
-        } else {
-            #[cfg(unix)]
-            {
-                anyhow!(
-                    "neofetch process terminated by signal: {}",
-                    output
-                        .status
-                        .signal()
-                        .expect("either one of status code or signal should be set")
-                )
-            }
-            #[cfg(not(unix))]
-            unimplemented!("status code not expected to be `None` on non-Unix platforms")
-        };
-        Err(err)?;
-    }
+    process_command_status(&output.status).context("neofetch command exited with error")?;
 
     let out = String::from_utf8(output.stdout)
         .context("failed to process neofetch output as it contains invalid UTF-8")?
@@ -210,8 +362,67 @@ where
     }
 }
 
+fn process_command_status(status: &ExitStatus) -> Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+
+    let err = if let Some(code) = status.code() {
+        anyhow!("child process exited with status code: {code}")
+    } else {
+        #[cfg(unix)]
+        {
+            anyhow!(
+                "child process terminated by signal: {}",
+                status
+                    .signal()
+                    .expect("either one of status code or signal should be set")
+            )
+        }
+        #[cfg(not(unix))]
+        unimplemented!("status code not expected to be `None` on non-Unix platforms")
+    };
+    Err(err)
+}
+
 #[tracing::instrument(level = "debug")]
 fn get_distro_name() -> Result<String> {
     run_neofetch_command_piped(&["ascii_distro_name"])
         .context("failed to get distro name from neofetch")
+}
+
+/// Runs neofetch with colors.
+#[tracing::instrument(level = "debug")]
+fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
+    // Escape backslashes here because backslashes are escaped in neofetch for
+    // printf
+    let asc = asc.replace('\\', r"\\");
+
+    // Write temp file
+    let mut temp_file =
+        NamedTempFile::with_prefix("ascii.txt").context("failed to create temp file for ascii")?;
+    temp_file
+        .write_all(asc.as_bytes())
+        .context("failed to write ascii to temp file")?;
+
+    // Call neofetch with the temp file
+    let temp_file_path = temp_file.into_temp_path();
+    let args = {
+        let mut v = vec![
+            "--ascii",
+            "--source",
+            temp_file_path
+                .to_str()
+                .expect("temp file path should not contain invalid UTF-8"),
+            "--ascii-colors",
+        ];
+        if let Some(args) = args {
+            let args: Vec<_> = args.iter().map(|s| &**s).collect();
+            v.extend(args);
+        }
+        v
+    };
+    run_neofetch_command(&args).context("failed to run neofetch command")?;
+
+    Ok(())
 }
