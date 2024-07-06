@@ -13,6 +13,9 @@ use hyfetch::utils::get_cache_path;
 use tracing::debug;
 
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    enable_ansi_support::enable_ansi_support();
+
     let options = options().run();
 
     init_tracing_subsriber(options.debug).context("failed to init tracing subscriber")?;
@@ -97,7 +100,8 @@ fn main() -> Result<()> {
     };
     let asc = config
         .color_align
-        .recolor_ascii(asc, color_profile, color_mode, config.light_dark);
+        .recolor_ascii(asc, color_profile, color_mode, config.light_dark)
+        .context("failed to recolor ascii")?;
     neofetch_util::run(asc, backend, args).context("failed to run")?;
 
     if options.ask_exit {

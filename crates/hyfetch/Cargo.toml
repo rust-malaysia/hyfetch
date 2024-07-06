@@ -10,23 +10,22 @@ license = { workspace = true }
 default-run = "hyfetch"
 
 [dependencies]
-# ansi_colours = { workspace = true, features = ["rgb"] }
+aho-corasick = { workspace = true, features = ["perf-literal", "std"] }
+ansi_colours = { workspace = true, features = [] }
+# anstream = { workspace = true, features = ["auto"] }
 anyhow = { workspace = true, features = ["std"] }
 bpaf = { workspace = true, features = [] }
-# bytemuck = { workspace = true, features = [] }
 chrono = { workspace = true, features = ["clock", "std"] }
 deranged = { workspace = true, features = ["serde", "std"] }
-derive_more = { workspace = true, features = ["from", "from_str", "into", "std"] }
 directories = { workspace = true, features = [] }
 indexmap = { workspace = true, features = ["serde", "std"] }
 palette = { workspace = true, features = ["std"] }
-regex = { workspace = true, features = ["perf", "std", "unicode"] }
-# rgb = { workspace = true, features = [] }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde_path_to_error = { workspace = true, features = [] }
 shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }
+tempfile = { workspace = true, features = [] }
 thiserror = { workspace = true, features = [] }
 tracing = { workspace = true, features = ["attributes", "std"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt", "smallvec", "std", "tracing-log"] }
@@ -35,6 +34,9 @@ tracing-subscriber = { workspace = true, features = ["ansi", "fmt", "smallvec", 
 indexmap = { workspace = true, features = ["std"] }
 regex = { workspace = true, features = ["perf", "std", "unicode"] }
 unicode-normalization = { workspace = true, features = ["std"] }
+
+[target.'cfg(windows)'.dependencies]
+enable-ansi-support = { workspace = true, features = [] }
 
 [features]
 default = ["autocomplete", "color"]

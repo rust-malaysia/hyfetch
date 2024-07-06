@@ -146,8 +146,9 @@ impl Preset {
             // sourced from https://www.flagcolorcodes.com/autoromantic
             Self::Autoromantic => ColorProfile::from_hex_colors(
                 // symbol interpreted
-                vec!["#99D9EA", "#99D9EA", "#3DA542", "#7F7F7F", "#7F7F7F"],
-            ),
+                vec!["#99D9EA", "#3DA542", "#7F7F7F"],
+            )
+            .and_then(|c| c.with_weights(vec![2, 1, 2])),
 
             // sourced from https://www.flagcolorcodes.com/autosexual
             Self::Autosexual => ColorProfile::from_hex_colors(vec!["#99D9EA", "#7F7F7F"]),
@@ -192,15 +193,17 @@ impl Preset {
 
             // used colorpicker to source form https://www.deviantart.com/pride-flags/art/Demifae-870194777
             Self::Demifae => ColorProfile::from_hex_colors(vec![
-                "#7F7F7F", "#7F7F7F", "#C5C5C5", "#C5C5C5", "#97C3A4", "#C4DEAE", "#FFFFFF",
-                "#FCA2C5", "#AB7EDF", "#C5C5C5", "#C5C5C5", "#7F7F7F", "#7F7F7F",
-            ]),
+                "#7F7F7F", "#C5C5C5", "#97C3A4", "#C4DEAE", "#FFFFFF", "#FCA2C5", "#AB7EDF",
+                "#C5C5C5", "#7F7F7F",
+            ])
+            .and_then(|c| c.with_weights(vec![2, 2, 1, 1, 1, 1, 1, 2, 2])),
 
             // sourced from https://www.flagcolorcodes.com/demifaun
             Self::Demifaun => ColorProfile::from_hex_colors(vec![
-                "#7F7F7F", "#7F7F7F", "#C6C6C6", "#C6C6C6", "#FCC688", "#FFF19C", "#FFFFFF",
-                "#8DE0D5", "#9682EC", "#C6C6C6", "#C6C6C6", "#7F7F7F", "#7F7F7F",
-            ]),
+                "#7F7F7F", "#C6C6C6", "#FCC688", "#FFF19C", "#FFFFFF", "#8DE0D5", "#9682EC",
+                "#C6C6C6", "#7F7F7F",
+            ])
+            .and_then(|c| c.with_weights(vec![2, 2, 1, 1, 1, 1, 1, 2, 2])),
 
             // yellow sourced from https://lgbtqia.fandom.com/f/p/4400000000000041031
             // other colors sourced from demiboy and demigirl flags
@@ -272,9 +275,9 @@ impl Preset {
 
             // sourced from https://www.flagcolorcodes.com/greygender
             Self::Greygender => ColorProfile::from_hex_colors(vec![
-                "#B3B3B3", "#B3B3B3", "#FFFFFF", "#062383", "#062383", "#FFFFFF", "#535353",
-                "#535353",
-            ]),
+                "#B3B3B3", "#FFFFFF", "#062383", "#FFFFFF", "#535353",
+            ])
+            .and_then(|c| c.with_weights(vec![2, 1, 2, 1, 2])),
 
             // sourced from https://www.flagcolorcodes.com/greysexual
             Self::Greysexual => ColorProfile::from_hex_colors(vec![
@@ -381,7 +384,7 @@ impl Preset {
                 "#FF6692", "#FF9A98", "#FFB883", "#FBFFA8", "#85BCFF", "#9D85FF", "#A510FF",
             ]),
         })
-        .expect("presets should not be invalid")
+        .expect("preset color profiles should not be invalid")
     }
 }
 
@@ -422,6 +425,46 @@ impl ColorProfile {
         }
 
         Ok(Self::new(weighted_colors))
+    }
+
+    /// Creates a new color profile, with the colors spread to the specified
+    /// length.
+    pub fn with_length(&self, length: u8) -> Result<Self> {
+        let orig_len = self.colors.len();
+        let orig_len: u8 = orig_len.try_into().expect("`orig_len` should fit in `u8`");
+        if length < orig_len {
+            unimplemented!("compressing length of color profile not implemented");
+        }
+        let center_i = (orig_len as f32 / 2.0).floor() as usize;
+
+        // How many copies of each color should be displayed at least?
+        let repeats = (length as f32 / orig_len as f32).floor() as usize;
+        let repeats: u8 = repeats.try_into().expect("`repeats` should fit in `u8`");
+        let mut weights: Vec<u8> = iter::repeat(repeats).take(orig_len as usize).collect();
+
+        // How many extra spaces left?
+        let mut extras = length % orig_len;
+
+        // If there is an odd space left, extend the center by one space
+        if extras % 2 == 1 {
+            extras -= 1;
+            weights[center_i] += 1;
+        }
+
+        // Add weight to border until there's no space left (extras must be even at this
+        // point)
+        // TODO: this gives a horrible result when `extras` is still large relative to
+        // `orig_len` - we should probably distribute even if slightly uneven
+        let mut border_i = 0;
+        while extras > 0 {
+            extras -= 2;
+            weights[border_i] += 1;
+            let weights_len = weights.len();
+            weights[weights_len - border_i - 1] += 1;
+            border_i += 1;
+        }
+
+        self.with_weights(weights)
     }
 
     /// Creates a new color profile, with the colors lightened by a multiplier.
