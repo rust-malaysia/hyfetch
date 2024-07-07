@@ -37,6 +37,7 @@ pub enum ColorAlignment {
     },
     Custom {
         #[serde(rename = "custom_colors")]
+        #[serde(deserialize_with = "crate::utils::index_map_serde::deserialize")]
         colors: IndexMap<NeofetchAsciiIndexedColor, PresetIndexedColor>,
     },
 }
@@ -185,8 +186,28 @@ impl ColorAlignment {
                     },
                 }
             },
-            Self::Custom { colors } => {
-                todo!()
+            Self::Custom {
+                colors: custom_colors,
+            } => {
+                let ColorProfile { colors } = color_profile.unique_colors();
+
+                // Apply colors
+                let asc = {
+                    let ac = NEOFETCH_COLORS_AC
+                        .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+                    const N: usize = NEOFETCH_COLOR_PATTERNS.len();
+                    let mut replacements = vec![Cow::from(""); N];
+                    for (&ai, &pi) in custom_colors {
+                        let ai: u8 = ai.into();
+                        let pi: u8 = pi.into();
+                        replacements[ai as usize - 1] = colors[pi as usize]
+                            .to_ansi_string(color_mode, ForegroundBackground::Foreground)
+                            .into();
+                    }
+                    ac.replace_all(&asc, &replacements)
+                };
+
+                asc
             },
         };
 
