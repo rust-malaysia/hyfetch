@@ -7,9 +7,10 @@ use palette::num::ClampAssign;
 use palette::{Hsl, IntoColorMut, LinSrgb, Srgb};
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, VariantNames};
+use unicode_segmentation::UnicodeSegmentation;
 
-use crate::color_util::Lightness;
-use crate::types::LightDark;
+use crate::color_util::{ForegroundBackground, Lightness, ToAnsiString};
+use crate::types::{AnsiMode, LightDark};
 
 #[derive(Copy, Clone, Hash, Debug, Deserialize, EnumString, Serialize, VariantNames)]
 #[serde(rename_all = "kebab-case")]
@@ -290,10 +291,10 @@ impl Preset {
             },
 
             // sourced from https://www.flagcolorcodes.com/intergender
-            Self::Intergender => ColorProfile::from_hex_colors(
-                // todo: use weighted spacing
-                vec!["#900DC2", "#900DC2", "#FFE54F", "#900DC2", "#900DC2"],
-            ),
+            Self::Intergender => {
+                ColorProfile::from_hex_colors(vec!["#900DC2", "#FFE54F", "#900DC2"])
+                    .and_then(|c| c.with_weights(vec![2, 1, 2]))
+            },
 
             Self::Lesbian => ColorProfile::from_hex_colors(vec![
                 "#D62800", "#FF9B56", "#FFFFFF", "#D462A6", "#A40062",
@@ -440,7 +441,7 @@ impl ColorProfile {
         // How many copies of each color should be displayed at least?
         let repeats = (length as f32 / orig_len as f32).floor() as usize;
         let repeats: u8 = repeats.try_into().expect("`repeats` should fit in `u8`");
-        let mut weights: Vec<u8> = iter::repeat(repeats).take(orig_len as usize).collect();
+        let mut weights = vec![repeats; orig_len as usize];
 
         // How many extra spaces left?
         let mut extras = length % orig_len;
@@ -465,6 +466,50 @@ impl ColorProfile {
         }
 
         self.with_weights(weights)
+    }
+
+    /// Colors a text.
+    ///
+    /// # Arguments
+    ///
+    /// * `foreground_background` - Whether the color is shown on the foreground
+    ///   text or the background block
+    /// * `space_only` - Whether to only color spaces
+    pub fn color_text<S>(
+        &self,
+        txt: S,
+        color_mode: AnsiMode,
+        foreground_background: ForegroundBackground,
+        space_only: bool,
+    ) -> Result<String>
+    where
+        S: AsRef<str>,
+    {
+        let txt = txt.as_ref();
+
+        let ColorProfile { colors } = {
+            let length = txt.len();
+            let length: u8 = length.try_into().expect("`length` should fit in `u8`");
+            self.with_length(length)
+                .context("failed to spread color profile to length")?
+        };
+
+        let mut buf = String::new();
+        let txt: Vec<&str> = txt.graphemes(true).collect();
+        for (i, &gr) in txt.iter().enumerate() {
+            if space_only && gr != " " {
+                if i > 0 && txt[i - 1] == " " {
+                    buf.push_str("\x1b[39;49m");
+                }
+                buf.push_str(gr);
+            } else {
+                buf.push_str(&colors[i].to_ansi_string(color_mode, foreground_background));
+                buf.push_str(gr);
+            }
+        }
+
+        buf.push_str("\x1b[39;49m");
+        Ok(buf)
     }
 
     /// Creates a new color profile, with the colors lightened by a multiplier.

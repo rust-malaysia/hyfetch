@@ -6,7 +6,7 @@ use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::sync::OnceLock;
-use std::{env, fmt, iter};
+use std::{env, fmt};
 
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
@@ -83,11 +83,14 @@ impl ColorAlignment {
                 // Add new colors
                 let asc = match self {
                     Self::Horizontal { .. } => {
-                        let length = lines.len();
-                        let length: u8 = length.try_into().expect("`length` should fit in `u8`");
-                        let ColorProfile { colors } = color_profile
-                            .with_length(length)
-                            .context("failed to spread color profile to length")?;
+                        let ColorProfile { colors } = {
+                            let length = lines.len();
+                            let length: u8 =
+                                length.try_into().expect("`length` should fit in `u8`");
+                            color_profile
+                                .with_length(length)
+                                .context("failed to spread color profile to length")?
+                        };
                         let mut asc = String::new();
                         for (i, line) in lines.into_iter().enumerate() {
                             let line = line.replace(
@@ -119,18 +122,68 @@ impl ColorAlignment {
                     let ac = NEOFETCH_COLORS_AC
                         .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
                     const N: usize = NEOFETCH_COLOR_PATTERNS.len();
-                    let replacements: [&str; N] = iter::repeat("")
-                        .take(N)
-                        .collect::<Vec<_>>()
-                        .try_into()
-                        .unwrap();
-                    ac.replace_all(&asc, &replacements)
+                    const REPLACEMENTS: [&str; N] = [""; N];
+                    ac.replace_all(&asc, &REPLACEMENTS)
                 };
 
                 asc
             },
             Self::Horizontal { fore_back: None } | Self::Vertical { fore_back: None } => {
-                todo!()
+                // Remove existing colors
+                let asc = {
+                    let ac = NEOFETCH_COLORS_AC
+                        .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+                    const N: usize = NEOFETCH_COLOR_PATTERNS.len();
+                    const REPLACEMENTS: [&str; N] = [""; N];
+                    ac.replace_all(&asc, &REPLACEMENTS)
+                };
+
+                let lines: Vec<_> = asc.split('\n').collect();
+
+                // Add new colors
+                match self {
+                    Self::Horizontal { .. } => {
+                        let ColorProfile { colors } = {
+                            let length = lines.len();
+                            let length: u8 =
+                                length.try_into().expect("`length` should fit in `u8`");
+                            color_profile
+                                .with_length(length)
+                                .context("failed to spread color profile to length")?
+                        };
+                        let mut asc = String::new();
+                        for (i, line) in lines.into_iter().enumerate() {
+                            asc.push_str(
+                                &colors[i]
+                                    .to_ansi_string(color_mode, ForegroundBackground::Foreground),
+                            );
+                            asc.push_str(line);
+                            asc.push_str(&reset);
+                            asc.push('\n');
+                        }
+                        asc
+                    },
+                    Self::Vertical { .. } => {
+                        let mut asc = String::new();
+                        for line in lines {
+                            let line = color_profile
+                                .color_text(
+                                    line,
+                                    color_mode,
+                                    ForegroundBackground::Foreground,
+                                    false,
+                                )
+                                .context("failed to color text using color profile")?;
+                            asc.push_str(&line);
+                            asc.push_str(&reset);
+                            asc.push('\n');
+                        }
+                        asc
+                    },
+                    _ => {
+                        unreachable!();
+                    },
+                }
             },
             Self::Custom { colors } => {
                 todo!()
@@ -193,11 +246,22 @@ where
     };
     debug!(%distro, "distro name");
 
+    // Try new codegen-based detection method
     if let Some(distro) = Distro::detect(&distro) {
         return Ok(normalize_ascii(distro.ascii_art()));
     }
 
-    todo!()
+    debug!(%distro, "could not find a match for distro; falling back to neofetch");
+
+    // Old detection method that calls neofetch
+    let asc = run_neofetch_command_piped(&["print_ascii", "--ascii_distro", distro.as_ref()])
+        .context("failed to get ascii art from neofetch")?;
+
+    // Unescape backslashes here because backslashes are escaped in neofetch for
+    // printf
+    let asc = asc.replace(r"\\", r"\");
+
+    Ok(normalize_ascii(asc))
 }
 
 #[tracing::instrument(level = "debug")]
@@ -231,12 +295,8 @@ where
         let ac =
             NEOFETCH_COLORS_AC.get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
         const N: usize = NEOFETCH_COLOR_PATTERNS.len();
-        let replacements: [&str; N] = iter::repeat("")
-            .take(N)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap();
-        ac.replace_all(asc, &replacements)
+        const REPLACEMENTS: [&str; N] = [""; N];
+        ac.replace_all(asc, &REPLACEMENTS)
     };
 
     let Some(width) = asc.split('\n').map(|line| line.len()).max() else {

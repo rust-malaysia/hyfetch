@@ -34,3 +34,4 @@ thiserror = { version = "1.0.61", default-features = false }
 tracing = { version = "0.1.40", default-features = false }
 tracing-subscriber = { version = "0.3.18", default-features = false }
 unicode-normalization = { version = "0.1.23", default-features = false }
+unicode-segmentation = { version = "1.11.0", default-features = false }
