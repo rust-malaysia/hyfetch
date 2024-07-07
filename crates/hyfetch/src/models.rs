@@ -14,7 +14,7 @@ pub struct Config {
     pub color_align: ColorAlignment,
     pub backend: Backend,
     #[serde(default)]
-    #[serde(with = "self::args_serde_with")]
+    #[serde(with = "self::args_serde")]
     pub args: Option<Vec<String>>,
     pub distro: Option<String>,
     pub pride_month_disable: bool,
@@ -38,16 +38,15 @@ impl Config {
     }
 }
 
-mod args_serde_with {
+mod args_serde {
     use std::fmt;
 
     use serde::de::{self, value, Deserialize, Deserializer, SeqAccess, Visitor};
     use serde::ser::Serializer;
 
-    pub(super) fn serialize<S>(
-        value: &Option<Vec<String>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    type Value = Option<Vec<String>>;
+
+    pub(super) fn serialize<S>(value: &Value, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -57,7 +56,7 @@ mod args_serde_with {
         }
     }
 
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -88,7 +87,7 @@ mod args_serde_with {
         }
 
         impl<'de> Visitor<'de> for OptionVisitor {
-            type Value = Option<Vec<String>>;
+            type Value = Value;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("option")
