@@ -11,6 +11,8 @@ use std::{env, fmt};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
+#[cfg(windows)]
+use normpath::PathExt as _;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use tracing::debug;
@@ -217,13 +219,19 @@ impl ColorAlignment {
 
 /// Gets the absolute path of the neofetch command.
 pub fn get_command_path() -> Result<PathBuf> {
-    if let Ok(workspace_dir) = env::var("CARGO_WORKSPACE_DIR") {
+    if let Some(workspace_dir) = env::var_os("CARGO_WORKSPACE_DIR") {
         let path = Path::new(&workspace_dir);
         if path.exists() {
             let path = path.join("neofetch");
             match path.try_exists() {
                 Ok(true) => {
+                    #[cfg(not(windows))]
                     return path.canonicalize().context("failed to canonicalize path");
+                    #[cfg(windows)]
+                    return path
+                        .normalize()
+                        .map(|p| p.into())
+                        .context("failed to normalize path");
                 },
                 Ok(false) => {
                     Err(anyhow!("{path:?} does not exist or is not readable"))?;
@@ -236,7 +244,7 @@ pub fn get_command_path() -> Result<PathBuf> {
         }
     }
 
-    let Ok(path_env) = env::var("PATH") else {
+    let Some(path_env) = env::var_os("PATH") else {
         return Err(anyhow!("`PATH` env var is not set or invalid"));
     };
 
@@ -245,10 +253,66 @@ pub fn get_command_path() -> Result<PathBuf> {
         if !path.is_file() {
             continue;
         }
+        #[cfg(not(windows))]
         return path.canonicalize().context("failed to canonicalize path");
+        #[cfg(windows)]
+        return path
+            .normalize()
+            .map(|p| p.into())
+            .context("failed to normalize path");
     }
 
     Err(anyhow!("neofetch command not found"))
+}
+
+/// Ensures git bash installation for Windows.
+///
+/// Returns the path to git bash.
+#[cfg(windows)]
+pub fn ensure_git_bash() -> Result<PathBuf> {
+    let git_bash_path = {
+        // Bundled git bash
+        let current_exe_path = env::current_exe()
+            .and_then(|p| {
+                #[cfg(not(windows))]
+                {
+                    p.canonicalize()
+                }
+                #[cfg(windows)]
+                p.normalize().map(|p| p.into())
+            })
+            .context("failed to get path of current running executable")?;
+        let bash_path = current_exe_path.join("git/bin/bash.exe");
+        if bash_path.is_file() {
+            Some(bash_path)
+        } else {
+            None
+        }
+    };
+    let git_bash_path = git_bash_path.or_else(|| {
+        let program_files_path = env::var_os("ProgramFiles")?;
+        let bash_path = Path::new(&program_files_path).join("Git/bin/bash.exe");
+        if bash_path.is_file() {
+            Some(bash_path)
+        } else {
+            None
+        }
+    });
+    let git_bash_path = git_bash_path.or_else(|| {
+        let program_files_x86_path = env::var_os("ProgramFiles(x86)")?;
+        let bash_path = Path::new(&program_files_x86_path).join("Git/bin/bash.exe");
+        if bash_path.is_file() {
+            Some(bash_path)
+        } else {
+            None
+        }
+    });
+
+    let Some(git_bash_path) = git_bash_path else {
+        return Err(anyhow!("failed to find git bash executable"));
+    };
+
+    Ok(git_bash_path)
 }
 
 /// Gets the distro ascii of the current distro. Or if distro is specified, get
@@ -430,16 +494,24 @@ fn make_neofetch_command<S>(args: &[S]) -> Result<Command>
 where
     S: AsRef<OsStr>,
 {
+    let neofetch_path = get_command_path().context("failed to get neofetch command path")?;
+
+    debug!(?neofetch_path, "neofetch path");
+
     #[cfg(not(windows))]
     {
         let mut command = Command::new("bash");
-        command.arg(get_command_path().context("failed to get neofetch command path")?);
+        command.arg(neofetch_path);
         command.args(args);
         Ok(command)
     }
     #[cfg(windows)]
     {
-        todo!()
+        let git_bash_path = ensure_git_bash().context("failed to get git bash path")?;
+        let mut command = Command::new(git_bash_path);
+        command.arg(neofetch_path);
+        command.args(args);
+        Ok(command)
     }
 }
 

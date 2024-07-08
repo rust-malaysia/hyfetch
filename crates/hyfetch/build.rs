@@ -27,7 +27,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", neofetch_path.display());
 
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_dir = env::var_os("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir);
 
     export_distros(neofetch_path, out_path);
