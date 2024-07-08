@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use chrono::Datelike;
 use hyfetch::cli_options::options;
 use hyfetch::models::Config;
+#[cfg(windows)]
+use hyfetch::neofetch_util::ensure_git_bash;
 use hyfetch::neofetch_util::{self, get_distro_ascii};
 use hyfetch::presets::AssignLightness;
 use hyfetch::utils::get_cache_path;
@@ -22,12 +24,11 @@ fn main() -> Result<()> {
 
     debug!(?options, "CLI options");
 
-    // TODO
-
     // Use a custom distro
     let distro = options.distro.as_ref();
 
-    // TODO
+    #[cfg(windows)]
+    ensure_git_bash().context("failed to find git bash")?;
 
     if options.test_print {
         println!(
@@ -36,8 +37,6 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
-
-    // TODO
 
     let config = if options.config {
         create_config(options.config_file).context("failed to create config")?
