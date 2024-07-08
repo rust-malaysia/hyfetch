@@ -38,6 +38,7 @@ unicode-normalization = { workspace = true, features = ["std"] }
 
 [target.'cfg(windows)'.dependencies]
 enable-ansi-support = { workspace = true, features = [] }
+normpath = { workspace = true, features = [] }
 
 [features]
 default = ["autocomplete", "color"]

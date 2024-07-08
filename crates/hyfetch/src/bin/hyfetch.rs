@@ -16,7 +16,9 @@ use tracing::debug;
 
 fn main() -> Result<()> {
     #[cfg(windows)]
-    enable_ansi_support::enable_ansi_support();
+    if let Err(err) = enable_ansi_support::enable_ansi_support() {
+        debug!(err, "could not enable ANSI escape code support");
+    }
 
     let options = options().run();
 

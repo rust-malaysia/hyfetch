@@ -11,6 +11,8 @@ use std::{env, fmt};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
+#[cfg(windows)]
+use normpath::PathExt as _;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use tracing::debug;
@@ -223,7 +225,13 @@ pub fn get_command_path() -> Result<PathBuf> {
             let path = path.join("neofetch");
             match path.try_exists() {
                 Ok(true) => {
+                    #[cfg(not(windows))]
                     return path.canonicalize().context("failed to canonicalize path");
+                    #[cfg(windows)]
+                    return path
+                        .normalize()
+                        .map(|p| p.into())
+                        .context("failed to normalize path");
                 },
                 Ok(false) => {
                     Err(anyhow!("{path:?} does not exist or is not readable"))?;
@@ -245,7 +253,13 @@ pub fn get_command_path() -> Result<PathBuf> {
         if !path.is_file() {
             continue;
         }
+        #[cfg(not(windows))]
         return path.canonicalize().context("failed to canonicalize path");
+        #[cfg(windows)]
+        return path
+            .normalize()
+            .map(|p| p.into())
+            .context("failed to normalize path");
     }
 
     Err(anyhow!("neofetch command not found"))
@@ -259,7 +273,14 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
     let git_bash_path = {
         // Bundled git bash
         let current_exe_path = env::current_exe()
-            .and_then(|p| p.canonicalize())
+            .and_then(|p| {
+                #[cfg(not(windows))]
+                {
+                    p.canonicalize()
+                }
+                #[cfg(windows)]
+                p.normalize().map(|p| p.into())
+            })
             .context("failed to get path of current running executable")?;
         let bash_path = current_exe_path.join("git/bin/bash.exe");
         if bash_path.is_file() {
