@@ -16,6 +16,7 @@ use normpath::PathExt as _;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use tracing::debug;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::color_util::{
     color, ForegroundBackground, NeofetchAsciiIndexedColor, PresetIndexedColor, ToAnsiString,
@@ -455,7 +456,11 @@ where
         ac.replace_all(asc, &REPLACEMENTS)
     };
 
-    let Some(width) = asc.split('\n').map(|line| line.len()).max() else {
+    let Some(width) = asc
+        .split('\n')
+        .map(|line| line.graphemes(true).count())
+        .max()
+    else {
         unreachable!();
     };
     let width: u8 = width.try_into().expect("`width` should fit in `u8`");

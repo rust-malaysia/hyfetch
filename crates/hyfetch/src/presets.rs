@@ -482,6 +482,8 @@ impl ColorProfile {
     {
         let txt = txt.as_ref();
 
+        let txt: Vec<&str> = txt.graphemes(true).collect();
+
         let ColorProfile { colors } = {
             let length = txt.len();
             let length: u8 = length.try_into().expect("`length` should fit in `u8`");
@@ -490,7 +492,6 @@ impl ColorProfile {
         };
 
         let mut buf = String::new();
-        let txt: Vec<&str> = txt.graphemes(true).collect();
         for (i, &gr) in txt.iter().enumerate() {
             if space_only && gr != " " {
                 if i > 0 && txt[i - 1] == " " {
