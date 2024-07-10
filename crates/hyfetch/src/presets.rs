@@ -59,7 +59,6 @@ pub enum Preset {
     Gendervoid,
     Girlflux,
     Greygender,
-    #[serde(alias = "biromantic2")]
     Greysexual,
     Gynesexual,
     Intergender,
@@ -433,9 +432,10 @@ impl ColorProfile {
     pub fn with_length(&self, length: u8) -> Result<Self> {
         let orig_len = self.colors.len();
         let orig_len: u8 = orig_len.try_into().expect("`orig_len` should fit in `u8`");
-        if length < orig_len {
-            unimplemented!("compressing length of color profile not implemented");
-        }
+        // TODO: I believe weird things can happen because of this...
+        // if length < orig_len {
+        //     unimplemented!("compressing length of color profile not implemented");
+        // }
         let center_i = (orig_len as f32 / 2.0).floor() as usize;
 
         // How many copies of each color should be displayed at least?
@@ -448,21 +448,16 @@ impl ColorProfile {
 
         // If there is an odd space left, extend the center by one space
         if extras % 2 == 1 {
-            extras -= 1;
             weights[center_i] += 1;
+            extras -= 1;
         }
 
         // Add weight to border until there's no space left (extras must be even at this
         // point)
-        // TODO: this gives a horrible result when `extras` is still large relative to
-        // `orig_len` - we should probably distribute even if slightly uneven
-        let mut border_i = 0;
-        while extras > 0 {
-            extras -= 2;
+        let weights_len = weights.len();
+        for border_i in 0..(extras / 2) as usize {
             weights[border_i] += 1;
-            let weights_len = weights.len();
             weights[weights_len - border_i - 1] += 1;
-            border_i += 1;
         }
 
         self.with_weights(weights)
