@@ -27,15 +27,19 @@ use crate::types::{AnsiMode, Backend, LightDark};
 const NEOFETCH_COLOR_PATTERNS: [&str; 6] = ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
 static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
 
+type ForeBackColorPair = (NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor);
+
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
 #[serde(tag = "mode")]
 #[serde(rename_all = "lowercase")]
 pub enum ColorAlignment {
     Horizontal {
-        fore_back: Option<(NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor)>,
+        #[serde(skip)]
+        fore_back: Option<ForeBackColorPair>,
     },
     Vertical {
-        fore_back: Option<(NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor)>,
+        #[serde(skip)]
+        fore_back: Option<ForeBackColorPair>,
     },
     Custom {
         #[serde(rename = "custom_colors")]
@@ -45,8 +49,35 @@ pub enum ColorAlignment {
 }
 
 impl ColorAlignment {
+    /// Creates a new color alignment, with the specified foreground-background
+    /// configuration.
+    pub fn with_fore_back(&self, fore_back: Option<ForeBackColorPair>) -> Result<Self> {
+        match self {
+            Self::Horizontal { .. } => Ok(Self::Horizontal { fore_back }),
+            Self::Vertical { .. } => {
+                if fore_back.is_some() {
+                    debug!(
+                        "foreground-background configuration not implemented for vertical color \
+                         alignment; ignoring"
+                    );
+                }
+                Ok(Self::Vertical { fore_back: None })
+            },
+            Self::Custom { colors } => {
+                if fore_back.is_some() {
+                    return Err(anyhow!(
+                        "foreground-background configuration not supported for custom colors"
+                    ));
+                }
+                Ok(Self::Custom {
+                    colors: colors.clone(),
+                })
+            },
+        }
+    }
+
     /// Uses the color alignment to recolor an ascii art.
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(level = "debug", skip(asc))]
     pub fn recolor_ascii(
         &self,
         asc: String,
@@ -54,19 +85,20 @@ impl ColorAlignment {
         color_mode: AnsiMode,
         term: LightDark,
     ) -> Result<String> {
-        let asc = fill_starting(asc).context("failed to fill in starting neofetch color codes")?;
-
         let reset = color("&~&*", color_mode).expect("color reset should not be invalid");
 
         let asc = match self {
-            Self::Horizontal {
+            &Self::Horizontal {
                 fore_back: Some((fore, back)),
             }
-            | Self::Vertical {
+            | &Self::Vertical {
                 fore_back: Some((fore, back)),
             } => {
-                let fore: u8 = (*fore).into();
-                let back: u8 = (*back).into();
+                let fore: u8 = fore.into();
+                let back: u8 = back.into();
+
+                let asc = fill_starting(asc)
+                    .context("failed to fill in starting neofetch color codes")?;
 
                 // Replace foreground colors
                 let asc = asc.replace(
@@ -191,6 +223,9 @@ impl ColorAlignment {
             Self::Custom {
                 colors: custom_colors,
             } => {
+                let asc = fill_starting(asc)
+                    .context("failed to fill in starting neofetch color codes")?;
+
                 let ColorProfile { colors } = color_profile.unique_colors();
 
                 // Apply colors
@@ -214,6 +249,39 @@ impl ColorAlignment {
         };
 
         Ok(asc)
+    }
+
+    /// Gets recommended foreground-background configuration for distro, or
+    /// `None` if the distro ascii is not suitable for fore-back configuration.
+    pub fn fore_back(distro: Distro) -> Option<ForeBackColorPair> {
+        match distro {
+            Distro::Anarchy
+            | Distro::ArchStrike
+            | Distro::Astra_Linux
+            | Distro::Chapeau
+            | Distro::Fedora
+            | Distro::GalliumOS
+            | Distro::KrassOS
+            | Distro::Kubuntu
+            | Distro::Lubuntu
+            | Distro::openEuler
+            | Distro::Peppermint
+            | Distro::Pop__OS
+            | Distro::Ubuntu_Cinnamon
+            | Distro::Ubuntu_Kylin
+            | Distro::Ubuntu_MATE
+            | Distro::Ubuntu_old
+            | Distro::Ubuntu_Studio
+            | Distro::Ubuntu_Sway
+            | Distro::Ultramarine_Linux
+            | Distro::Univention
+            | Distro::Vanilla
+            | Distro::Xubuntu => Some((2u8.try_into().unwrap(), 1u8.try_into().unwrap())),
+
+            Distro::Antergos => Some((1u8.try_into().unwrap(), 2u8.try_into().unwrap())),
+
+            _ => None,
+        }
     }
 }
 
@@ -318,7 +386,7 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
 /// Gets the distro ascii of the current distro. Or if distro is specified, get
 /// the specific distro's ascii art instead.
 #[tracing::instrument(level = "debug")]
-pub fn get_distro_ascii<S>(distro: Option<S>) -> Result<String>
+pub fn get_distro_ascii<S>(distro: Option<S>) -> Result<(String, Option<ForeBackColorPair>)>
 where
     S: AsRef<str> + fmt::Debug,
 {
@@ -333,7 +401,10 @@ where
 
     // Try new codegen-based detection method
     if let Some(distro) = Distro::detect(&distro) {
-        return Ok(normalize_ascii(distro.ascii_art()));
+        return Ok((
+            normalize_ascii(distro.ascii_art()),
+            ColorAlignment::fore_back(distro),
+        ));
     }
 
     debug!(%distro, "could not find a match for distro; falling back to neofetch");
@@ -346,10 +417,10 @@ where
     // printf
     let asc = asc.replace(r"\\", r"\");
 
-    Ok(normalize_ascii(asc))
+    Ok((normalize_ascii(asc), None))
 }
 
-#[tracing::instrument(level = "debug")]
+#[tracing::instrument(level = "debug", skip(asc))]
 pub fn run(asc: String, backend: Backend, args: Option<&Vec<String>>) -> Result<()> {
     match backend {
         Backend::Neofetch => {
@@ -432,7 +503,7 @@ where
         let mut matches = ac.find_iter(line).peekable();
 
         match matches.peek() {
-            Some(m) if m.start() == 0 => {
+            Some(m) if m.start() == 0 || line[0..m.start()].trim_end_matches(' ').is_empty() => {
                 // line starts with neofetch color code, do nothing
             },
             _ => {
@@ -545,7 +616,7 @@ fn get_distro_name() -> Result<String> {
 }
 
 /// Runs neofetch with colors.
-#[tracing::instrument(level = "debug")]
+#[tracing::instrument(level = "debug", skip(asc))]
 fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
     // Escape backslashes here because backslashes are escaped in neofetch for
     // printf

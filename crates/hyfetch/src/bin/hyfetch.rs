@@ -9,7 +9,7 @@ use hyfetch::cli_options::options;
 use hyfetch::models::Config;
 #[cfg(windows)]
 use hyfetch::neofetch_util::ensure_git_bash;
-use hyfetch::neofetch_util::{self, get_distro_ascii};
+use hyfetch::neofetch_util::{self, get_distro_ascii, ColorAlignment};
 use hyfetch::presets::AssignLightness;
 use hyfetch::utils::get_cache_path;
 use tracing::debug;
@@ -33,10 +33,8 @@ fn main() -> Result<()> {
     ensure_git_bash().context("failed to find git bash")?;
 
     if options.test_print {
-        println!(
-            "{}",
-            get_distro_ascii(distro).context("failed to get distro ascii")?
-        );
+        let (asc, _) = get_distro_ascii(distro).context("failed to get distro ascii")?;
+        println!("{asc}");
         return Ok(());
     }
 
@@ -94,13 +92,28 @@ fn main() -> Result<()> {
     };
     debug!(?color_profile, "lightened color profile");
 
-    let asc = if let Some(path) = options.ascii_file {
-        fs::read_to_string(&path).with_context(|| format!("failed to read ascii from {path:?}"))?
+    let (asc, fore_back) = if let Some(path) = options.ascii_file {
+        (
+            fs::read_to_string(&path)
+                .with_context(|| format!("failed to read ascii from {path:?}"))?,
+            None,
+        )
     } else {
         get_distro_ascii(distro).context("failed to get distro ascii")?
     };
-    let asc = config
-        .color_align
+    let color_align = if fore_back.is_some() {
+        match config.color_align {
+            ca @ ColorAlignment::Horizontal { .. } | ca @ ColorAlignment::Vertical { .. } => {
+                ca.with_fore_back(fore_back).context(
+                    "failed to create color alignment with foreground-background configuration",
+                )?
+            },
+            ca @ ColorAlignment::Custom { .. } => ca,
+        }
+    } else {
+        config.color_align
+    };
+    let asc = color_align
         .recolor_ascii(asc, color_profile, color_mode, config.light_dark)
         .context("failed to recolor ascii")?;
     neofetch_util::run(asc, backend, args).context("failed to run")?;
