@@ -7,6 +7,7 @@ use palette::num::ClampAssign;
 use palette::{Hsl, IntoColorMut, LinSrgb, Srgb};
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, VariantNames};
+use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::color_util::{ForegroundBackground, Lightness, ToAnsiString};
@@ -413,9 +414,10 @@ impl ColorProfile {
     ///   `colors[i]` appears)
     pub fn with_weights(&self, weights: Vec<u8>) -> Result<Self> {
         if weights.len() != self.colors.len() {
-            Err(anyhow!(
+            debug!(?weights, ?self.colors, "length mismatch between `weights` and `colors`");
+            return Err(anyhow!(
                 "`weights` should have the same number of elements as `colors`"
-            ))?;
+            ));
         }
 
         let mut weighted_colors = vec![];
@@ -488,7 +490,7 @@ impl ColorProfile {
             let length = txt.len();
             let length: u8 = length.try_into().expect("`length` should fit in `u8`");
             self.with_length(length)
-                .context("failed to spread color profile to length")?
+                .with_context(|| format!("failed to spread color profile to length {length}"))?
         };
 
         let mut buf = String::new();

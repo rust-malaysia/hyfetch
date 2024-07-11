@@ -1,7 +1,14 @@
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt as _;
+use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
+use std::{env, fs, io};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use directories::ProjectDirs;
+#[cfg(windows)]
+use normpath::PathExt as _;
+use tracing::debug;
 
 pub fn get_cache_path() -> Result<PathBuf> {
     let path = ProjectDirs::from("", "", "hyfetch")
@@ -9,6 +16,97 @@ pub fn get_cache_path() -> Result<PathBuf> {
         .cache_dir()
         .to_owned();
     Ok(path)
+}
+
+/// Finds a command in `PATH`.
+///
+/// Returns the canonicalized / normalized absolute path to the command.
+pub fn find_in_path<P>(program: P) -> Result<Option<PathBuf>>
+where
+    P: AsRef<Path>,
+{
+    let program = program.as_ref();
+
+    // Only accept program name, i.e. a relative path with one component
+    if program.parent() != Some(Path::new("")) {
+        return Err(anyhow!("invalid command name {program:?}"));
+    };
+
+    let path_env = env::var_os("PATH").context("`PATH` env var is not set or invalid")?;
+
+    for search_path in env::split_paths(&path_env) {
+        let path = search_path.join(program);
+        let path = find_file(&path)
+            .with_context(|| format!("failed to check existence of file {path:?}"))?;
+        if path.is_some() {
+            return Ok(path);
+        }
+    }
+
+    Ok(None)
+}
+
+/// Finds a file.
+///
+/// Returns the canonicalized / normalized absolute path to the file.
+pub fn find_file<P>(path: P) -> Result<Option<PathBuf>>
+where
+    P: AsRef<Path>,
+{
+    let path = path.as_ref();
+
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Ok(None);
+        },
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to get metadata for {path:?}"));
+        },
+    };
+
+    if !metadata.is_file() {
+        debug!(?path, "path exists but is not a file");
+        return Ok(None);
+    }
+
+    #[cfg(not(windows))]
+    {
+        path.canonicalize()
+            .with_context(|| format!("failed to canonicalize path {path:?}"))
+            .map(Some)
+    }
+    #[cfg(windows)]
+    {
+        path.normalize()
+            .with_context(|| format!("failed to normalize path {path:?}"))
+            .map(|p| Some(p.into()))
+    }
+}
+
+pub fn process_command_status(status: &ExitStatus) -> Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+
+    let err = if let Some(code) = status.code() {
+        anyhow!("child process exited with status code: {code}")
+    } else {
+        #[cfg(unix)]
+        {
+            anyhow!(
+                "child process terminated by signal: {}",
+                status
+                    .signal()
+                    .expect("either one of status code or signal should be set")
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            unimplemented!("status code not expected to be `None` on non-Unix platforms")
+        }
+    };
+    Err(err)
 }
 
 pub(crate) mod index_map_serde {

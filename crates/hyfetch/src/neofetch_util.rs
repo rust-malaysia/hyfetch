@@ -1,10 +1,8 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::io::Write;
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::Command;
 use std::sync::OnceLock;
 use std::{env, fmt};
 
@@ -24,6 +22,7 @@ use crate::color_util::{
 use crate::distros::Distro;
 use crate::presets::ColorProfile;
 use crate::types::{AnsiMode, Backend, LightDark};
+use crate::utils::{find_file, find_in_path, process_command_status};
 
 const NEOFETCH_COLOR_PATTERNS: [&str; 6] = ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
 static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
@@ -287,51 +286,59 @@ impl ColorAlignment {
 }
 
 /// Gets the absolute path of the neofetch command.
-pub fn get_command_path() -> Result<PathBuf> {
+pub fn neofetch_path() -> Result<Option<PathBuf>> {
     if let Some(workspace_dir) = env::var_os("CARGO_WORKSPACE_DIR") {
-        let path = Path::new(&workspace_dir);
-        if path.exists() {
-            let path = path.join("neofetch");
-            match path.try_exists() {
-                Ok(true) => {
-                    #[cfg(not(windows))]
-                    return path.canonicalize().context("failed to canonicalize path");
-                    #[cfg(windows)]
-                    return path
-                        .normalize()
-                        .map(|p| p.into())
-                        .context("failed to normalize path");
-                },
-                Ok(false) => {
-                    Err(anyhow!("{path:?} does not exist or is not readable"))?;
-                },
-                Err(err) => {
-                    Err(err)
-                        .with_context(|| format!("failed to check for existence of {path:?}"))?;
-                },
-            }
-        }
+        debug!(
+            ?workspace_dir,
+            "CARGO_WORKSPACE_DIR env var is set; using neofetch from project directory"
+        );
+        let workspace_path = Path::new(&workspace_dir);
+        let workspace_path = match workspace_path.try_exists() {
+            Ok(true) => workspace_path,
+            Ok(false) => {
+                return Err(anyhow!(
+                    "{workspace_path:?} does not exist or is not readable"
+                ));
+            },
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("failed to check for existence of {workspace_path:?}")
+                });
+            },
+        };
+        let neofetch_path = workspace_path.join("neofetch");
+        return find_file(&neofetch_path)
+            .with_context(|| format!("failed to check existence of file {neofetch_path:?}"));
     }
 
-    let Some(path_env) = env::var_os("PATH") else {
-        return Err(anyhow!("`PATH` env var is not set or invalid"));
+    let neowofetch_path = find_in_path("neowofetch")
+        .context("failed to check existence of `neowofetch` in `PATH`")?;
+
+    // Fall back to `neowofetch` in directory of current executable
+    let neowofetch_path = if neowofetch_path.is_some() {
+        neowofetch_path
+    } else {
+        let current_exe_path = env::current_exe()
+            .and_then(|p| {
+                #[cfg(not(windows))]
+                {
+                    p.canonicalize()
+                }
+                #[cfg(windows)]
+                {
+                    p.normalize().map(|p| p.into())
+                }
+            })
+            .context("failed to get path of current running executable")?;
+        let neowofetch_path = current_exe_path
+            .parent()
+            .expect("parent should not be `None`")
+            .join("neowofetch");
+        find_file(&neowofetch_path)
+            .with_context(|| format!("failed to check existence of file {neowofetch_path:?}"))?
     };
 
-    for search_path in env::split_paths(&path_env) {
-        let path = search_path.join("neowofetch");
-        if !path.is_file() {
-            continue;
-        }
-        #[cfg(not(windows))]
-        return path.canonicalize().context("failed to canonicalize path");
-        #[cfg(windows)]
-        return path
-            .normalize()
-            .map(|p| p.into())
-            .context("failed to normalize path");
-    }
-
-    Err(anyhow!("neofetch command not found"))
+    Ok(neowofetch_path)
 }
 
 /// Ensures git bash installation for Windows.
@@ -342,16 +349,12 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
     let git_bash_path = {
         // Bundled git bash
         let current_exe_path = env::current_exe()
-            .and_then(|p| {
-                #[cfg(not(windows))]
-                {
-                    p.canonicalize()
-                }
-                #[cfg(windows)]
-                p.normalize().map(|p| p.into())
-            })
+            .and_then(|p| p.normalize().map(|p| p.into()))
             .context("failed to get path of current running executable")?;
-        let bash_path = current_exe_path.join("git/bin/bash.exe");
+        let bash_path = current_exe_path
+            .parent()
+            .expect("parent should not be `None`")
+            .join("git/bin/bash.exe");
         if bash_path.is_file() {
             Some(bash_path)
         } else {
@@ -377,9 +380,7 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
         }
     });
 
-    let Some(git_bash_path) = git_bash_path else {
-        return Err(anyhow!("failed to find git bash executable"));
-    };
+    let git_bash_path = git_bash_path.context("failed to find git bash executable")?;
 
     Ok(git_bash_path)
 }
@@ -421,17 +422,16 @@ where
     Ok((normalize_ascii(asc), None))
 }
 
-#[tracing::instrument(level = "debug", skip(asc))]
 pub fn run(asc: String, backend: Backend, args: Option<&Vec<String>>) -> Result<()> {
     match backend {
         Backend::Neofetch => {
             run_neofetch(asc, args).context("failed to run neofetch")?;
         },
         Backend::Fastfetch => {
-            todo!();
+            run_fastfetch(asc, args, false).context("failed to run fastfetch")?;
         },
         Backend::FastfetchOld => {
-            todo!();
+            run_fastfetch(asc, args, true).context("failed to run fastfetch")?;
         },
         Backend::Qwqfetch => {
             todo!();
@@ -512,9 +512,9 @@ where
                 // line starts with neofetch color code, do nothing
             },
             _ => {
-                new.push_str(last.ok_or_else(|| {
-                    anyhow!("failed to find neofetch color code from a previous line")
-                })?);
+                new.push_str(
+                    last.context("failed to find neofetch color code from a previous line")?,
+                );
             },
         }
         new.push_str(line);
@@ -529,29 +529,12 @@ where
     Ok(new)
 }
 
-/// Runs neofetch command.
-#[tracing::instrument(level = "debug")]
-fn run_neofetch_command<S>(args: &[S]) -> Result<()>
-where
-    S: AsRef<OsStr> + fmt::Debug,
-{
-    let mut command = make_neofetch_command(args).context("failed to make neofetch command")?;
-
-    let status = command
-        .status()
-        .context("failed to execute neofetch command as child process")?;
-    process_command_status(&status).context("neofetch command exited with error")?;
-
-    Ok(())
-}
-
 /// Runs neofetch command, returning the piped stdout output.
-#[tracing::instrument(level = "debug")]
 fn run_neofetch_command_piped<S>(args: &[S]) -> Result<String>
 where
     S: AsRef<OsStr> + fmt::Debug,
 {
-    let mut command = make_neofetch_command(args).context("failed to make neofetch command")?;
+    let mut command = make_neofetch_command(args)?;
 
     let output = command
         .output()
@@ -570,7 +553,8 @@ fn make_neofetch_command<S>(args: &[S]) -> Result<Command>
 where
     S: AsRef<OsStr>,
 {
-    let neofetch_path = get_command_path().context("failed to get neofetch command path")?;
+    let neofetch_path = neofetch_path().context("failed to get neofetch path")?;
+    let neofetch_path = neofetch_path.context("neofetch command not found")?;
 
     debug!(?neofetch_path, "neofetch path");
 
@@ -589,29 +573,6 @@ where
         command.args(args);
         Ok(command)
     }
-}
-
-fn process_command_status(status: &ExitStatus) -> Result<()> {
-    if status.success() {
-        return Ok(());
-    }
-
-    let err = if let Some(code) = status.code() {
-        anyhow!("child process exited with status code: {code}")
-    } else {
-        #[cfg(unix)]
-        {
-            anyhow!(
-                "child process terminated by signal: {}",
-                status
-                    .signal()
-                    .expect("either one of status code or signal should be set")
-            )
-        }
-        #[cfg(not(unix))]
-        unimplemented!("status code not expected to be `None` on non-Unix platforms")
-    };
-    Err(err)
 }
 
 #[tracing::instrument(level = "debug")]
@@ -651,7 +612,111 @@ fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
         }
         v
     };
-    run_neofetch_command(&args).context("failed to run neofetch command")?;
+    let mut command = make_neofetch_command(&args)?;
+
+    debug!(?command, "neofetch command");
+
+    let status = command
+        .status()
+        .context("failed to execute neofetch command as child process")?;
+    process_command_status(&status).context("neofetch command exited with error")?;
+
+    Ok(())
+}
+
+fn fastfetch_path() -> Result<Option<PathBuf>> {
+    let fastfetch_path =
+        find_in_path("fastfetch").context("failed to check existence of `fastfetch` in `PATH`")?;
+
+    // Fall back to `fastfetch` in directory of current executable
+    let current_exe_path = env::current_exe()
+        .and_then(|p| {
+            #[cfg(not(windows))]
+            {
+                p.canonicalize()
+            }
+            #[cfg(windows)]
+            {
+                p.normalize().map(|p| p.into())
+            }
+        })
+        .context("failed to get path of current running executable")?;
+    let current_exe_dir_path = current_exe_path
+        .parent()
+        .expect("parent should not be `None`");
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        let fastfetch_path = current_exe_dir_path.join("fastfetch");
+        find_file(&fastfetch_path)
+            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
+    };
+
+    // Bundled fastfetch
+    #[cfg(unix)]
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        let fastfetch_path = current_exe_dir_path.join("fastfetch/usr/bin/fastfetch");
+        find_file(&fastfetch_path)
+            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
+    };
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        let fastfetch_path = current_exe_dir_path.join("fastfetch/fastfetch");
+        find_file(&fastfetch_path)
+            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
+    };
+    #[cfg(windows)]
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        let fastfetch_path = current_exe_dir_path.join("fastfetch/fastfetch.exe");
+        find_file(&fastfetch_path)
+            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
+    };
+
+    Ok(fastfetch_path)
+}
+
+/// Runs fastfetch with colors.
+#[tracing::instrument(level = "debug", skip(asc))]
+fn run_fastfetch(asc: String, args: Option<&Vec<String>>, legacy: bool) -> Result<()> {
+    // Find fastfetch binary
+    let fastfetch_path = fastfetch_path().context("failed to get fastfetch path")?;
+    let fastfetch_path = fastfetch_path.context("fastfetch command not found")?;
+
+    debug!(?fastfetch_path, "fastfetch path");
+
+    // Write temp file
+    let mut temp_file =
+        NamedTempFile::with_prefix("ascii.txt").context("failed to create temp file for ascii")?;
+    temp_file
+        .write_all(asc.as_bytes())
+        .context("failed to write ascii to temp file")?;
+
+    // Call fastfetch with the temp file
+    let temp_file_path = temp_file.into_temp_path();
+    let mut command = Command::new(fastfetch_path);
+    command.arg(if legacy { "--raw" } else { "--file-raw" });
+    command.arg(&temp_file_path);
+    if let Some(args) = args {
+        command.args(args);
+    }
+
+    debug!(?command, "fastfetch command");
+
+    let status = command
+        .status()
+        .context("failed to execute fastfetch command as child process")?;
+    if status.code() == Some(144) {
+        eprintln!(
+            "exit code 144 detected; please upgrade fastfetch to >=1.8.0 or use the \
+             'fastfetch-old' backend"
+        );
+    }
+    process_command_status(&status).context("fastfetch command exited with error")?;
 
     Ok(())
 }
