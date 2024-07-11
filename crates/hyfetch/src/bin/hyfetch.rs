@@ -64,7 +64,8 @@ fn main() -> Result<()> {
         println!();
 
         if !june_path.is_file() {
-            fs::create_dir_all(cache_path).context("failed to create cache dir")?;
+            fs::create_dir_all(&cache_path)
+                .with_context(|| format!("failed to create cache dir {cache_path:?}"))?;
             File::create(&june_path)
                 .with_context(|| format!("failed to create file {june_path:?}"))?;
         }
@@ -116,7 +117,7 @@ fn main() -> Result<()> {
     let asc = color_align
         .recolor_ascii(asc, color_profile, color_mode, config.light_dark)
         .context("failed to recolor ascii")?;
-    neofetch_util::run(asc, backend, args).context("failed to run")?;
+    neofetch_util::run(asc, backend, args)?;
 
     if options.ask_exit {
         print!("Press any key to exit...");

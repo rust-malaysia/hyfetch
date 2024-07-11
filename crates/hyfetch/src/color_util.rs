@@ -248,7 +248,7 @@ where
         let start = m.end();
         let end = msg[start..]
             .find(')')
-            .ok_or_else(|| anyhow!("missing closing brace for color code"));
+            .context("missing closing brace for color code");
         let end = match end {
             Ok(end) => end,
             Err(err) => {
@@ -306,7 +306,7 @@ where
         true
     });
     if let Some(err) = ret_err {
-        Err(err)?;
+        return Err(err);
     }
 
     Ok(dst)
