@@ -11,7 +11,7 @@ use palette::{IntoColorMut, LinSrgb, Okhsl, Srgb};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::types::{AnsiMode, LightDark};
+use crate::types::{AnsiMode, TerminalTheme};
 
 const MINECRAFT_COLORS: [(&str, &str); 30] = [
     // Minecraft formatting codes
@@ -114,7 +114,7 @@ pub trait ToAnsiString {
 }
 
 pub trait Theme {
-    fn theme(&self) -> LightDark;
+    fn theme(&self) -> TerminalTheme;
 }
 
 impl Lightness {
@@ -227,16 +227,16 @@ impl ToAnsiString for Srgb<u8> {
 }
 
 impl Theme for Srgb<u8> {
-    fn theme(&self) -> LightDark {
+    fn theme(&self) -> TerminalTheme {
         let mut rgb_f32_color: LinSrgb = self.into_linear();
 
         {
             let okhsl_f32_color: &mut Okhsl = &mut rgb_f32_color.into_color_mut();
 
             if okhsl_f32_color.lightness > 0.5 {
-                LightDark::Light
+                TerminalTheme::Light
             } else {
-                LightDark::Dark
+                TerminalTheme::Dark
             }
         }
     }

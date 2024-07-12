@@ -10,7 +10,7 @@ use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::color_util::{ForegroundBackground, Lightness, ToAnsiString};
-use crate::types::{AnsiMode, LightDark};
+use crate::types::{AnsiMode, TerminalTheme};
 
 #[derive(
     Copy,
@@ -639,20 +639,20 @@ impl ColorProfile {
     }
 
     /// Creates a new color profile, with the colors set to the specified
-    /// [`Okhsl`] lightness value, with respect to dark/light terminals.
-    pub fn with_lightness_dl(
+    /// [`Okhsl`] lightness value, adapted to the terminal theme.
+    pub fn with_lightness_adaptive(
         &self,
         lightness: Lightness,
-        term: LightDark,
+        theme: TerminalTheme,
         use_overlay: bool,
     ) -> Self {
         if use_overlay {
             todo!()
         }
 
-        match term {
-            LightDark::Dark => self.with_lightness(AssignLightness::ClampMin(lightness)),
-            LightDark::Light => self.with_lightness(AssignLightness::ClampMax(lightness)),
+        match theme {
+            TerminalTheme::Dark => self.with_lightness(AssignLightness::ClampMin(lightness)),
+            TerminalTheme::Light => self.with_lightness(AssignLightness::ClampMax(lightness)),
         }
     }
 

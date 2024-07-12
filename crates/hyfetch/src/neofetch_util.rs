@@ -22,7 +22,7 @@ use crate::color_util::{
 };
 use crate::distros::Distro;
 use crate::presets::ColorProfile;
-use crate::types::{AnsiMode, Backend, LightDark};
+use crate::types::{AnsiMode, Backend, TerminalTheme};
 use crate::utils::{find_file, find_in_path, process_command_status};
 
 const NEOFETCH_COLOR_PATTERNS: [&str; 6] = ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
@@ -84,7 +84,7 @@ impl ColorAlignment {
         asc: String,
         color_profile: ColorProfile,
         color_mode: AnsiMode,
-        term: LightDark,
+        theme: TerminalTheme,
     ) -> Result<String> {
         let reset = color("&~&*", color_mode).expect("color reset should not be invalid");
 
@@ -105,9 +105,9 @@ impl ColorAlignment {
                 let asc = asc.replace(
                     &format!("${{c{fore}}}"),
                     &color(
-                        match term {
-                            LightDark::Light => "&0",
-                            LightDark::Dark => "&f",
+                        match theme {
+                            TerminalTheme::Light => "&0",
+                            TerminalTheme::Dark => "&f",
                         },
                         color_mode,
                     )
@@ -466,14 +466,17 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
 /// Gets the distro ascii of the current distro. Or if distro is specified, get
 /// the specific distro's ascii art instead.
 #[tracing::instrument(level = "debug")]
-pub fn get_distro_ascii<S>(distro: Option<S>) -> Result<(String, Option<ForeBackColorPair>)>
+pub fn get_distro_ascii<S>(
+    distro: Option<S>,
+    backend: Backend,
+) -> Result<(String, Option<ForeBackColorPair>)>
 where
     S: AsRef<str> + fmt::Debug,
 {
     let distro: Cow<_> = if let Some(distro) = distro.as_ref() {
         distro.as_ref().into()
     } else {
-        get_distro_name()
+        get_distro_name(backend)
             .context("failed to get distro name")?
             .into()
     };
@@ -500,6 +503,7 @@ where
     Ok((normalize_ascii(asc), None))
 }
 
+#[tracing::instrument(level = "debug", skip(asc))]
 pub fn run(asc: String, backend: Backend, args: Option<&Vec<String>>) -> Result<()> {
     match backend {
         Backend::Neofetch => {
@@ -653,10 +657,60 @@ where
     }
 }
 
+/// Runs fastfetch command, returning the piped stdout output.
+fn run_fastfetch_command_piped<S>(args: &[S]) -> Result<String>
+where
+    S: AsRef<OsStr> + fmt::Debug,
+{
+    let mut command = make_fastfetch_command(args)?;
+
+    let output = command
+        .output()
+        .context("failed to execute fastfetch as child process")?;
+    debug!(?output, "fastfetch output");
+    process_command_status(&output.status).context("fastfetch command exited with error")?;
+
+    let out = String::from_utf8(output.stdout)
+        .context("failed to process fastfetch output as it contains invalid UTF-8")?
+        .trim()
+        .to_owned();
+    Ok(out)
+}
+
+fn make_fastfetch_command<S>(args: &[S]) -> Result<Command>
+where
+    S: AsRef<OsStr>,
+{
+    // Find fastfetch binary
+    let fastfetch_path = fastfetch_path().context("failed to get fastfetch path")?;
+    let fastfetch_path = fastfetch_path.context("fastfetch command not found")?;
+
+    debug!(?fastfetch_path, "fastfetch path");
+
+    let mut command = Command::new(fastfetch_path);
+    command.args(args);
+    Ok(command)
+}
+
 #[tracing::instrument(level = "debug")]
-fn get_distro_name() -> Result<String> {
-    run_neofetch_command_piped(&["ascii_distro_name"])
-        .context("failed to get distro name from neofetch")
+fn get_distro_name(backend: Backend) -> Result<String> {
+    match backend {
+        Backend::Neofetch => run_neofetch_command_piped(&["ascii_distro_name"])
+            .context("failed to get distro name from neofetch"),
+        Backend::Fastfetch | Backend::FastfetchOld => run_fastfetch_command_piped(&[
+            "--logo",
+            "none",
+            "-s",
+            "OS",
+            "--disable-linewrap",
+            "--os-key",
+            " ",
+        ])
+        .context("failed to get distro name from fastfetch"),
+        Backend::Qwqfetch => {
+            todo!()
+        },
+    }
 }
 
 /// Runs neofetch with colors.
@@ -676,21 +730,18 @@ fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
     // Call neofetch with the temp file
     let temp_file_path = temp_file.into_temp_path();
     let args = {
-        let mut v = vec![
-            "--ascii",
-            "--source",
-            temp_file_path
-                .to_str()
-                .expect("temp file path should not contain invalid UTF-8"),
-            "--ascii-colors",
+        let mut v: Vec<Cow<OsStr>> = vec![
+            OsStr::new("--ascii").into(),
+            OsStr::new("--source").into(),
+            OsStr::new(&temp_file_path).into(),
+            OsStr::new("--ascii-colors").into(),
         ];
         if let Some(args) = args {
-            let args: Vec<_> = args.iter().map(|s| &**s).collect();
-            v.extend(args);
+            v.extend(args.iter().map(|arg| OsStr::new(arg).into()));
         }
         v
     };
-    let mut command = make_neofetch_command(&args)?;
+    let mut command = make_neofetch_command(&args[..])?;
 
     debug!(?command, "neofetch command");
 
@@ -761,12 +812,6 @@ fn fastfetch_path() -> Result<Option<PathBuf>> {
 /// Runs fastfetch with colors.
 #[tracing::instrument(level = "debug", skip(asc))]
 fn run_fastfetch(asc: String, args: Option<&Vec<String>>, legacy: bool) -> Result<()> {
-    // Find fastfetch binary
-    let fastfetch_path = fastfetch_path().context("failed to get fastfetch path")?;
-    let fastfetch_path = fastfetch_path.context("fastfetch command not found")?;
-
-    debug!(?fastfetch_path, "fastfetch path");
-
     // Write temp file
     let mut temp_file =
         NamedTempFile::with_prefix("ascii.txt").context("failed to create temp file for ascii")?;
@@ -776,12 +821,17 @@ fn run_fastfetch(asc: String, args: Option<&Vec<String>>, legacy: bool) -> Resul
 
     // Call fastfetch with the temp file
     let temp_file_path = temp_file.into_temp_path();
-    let mut command = Command::new(fastfetch_path);
-    command.arg(if legacy { "--raw" } else { "--file-raw" });
-    command.arg(&temp_file_path);
-    if let Some(args) = args {
-        command.args(args);
-    }
+    let args = {
+        let mut v: Vec<Cow<OsStr>> = vec![
+            OsStr::new(if legacy { "--raw" } else { "--file-raw" }).into(),
+            OsStr::new(&temp_file_path).into(),
+        ];
+        if let Some(args) = args {
+            v.extend(args.iter().map(|arg| OsStr::new(arg).into()));
+        }
+        v
+    };
+    let mut command = make_fastfetch_command(&args[..])?;
 
     debug!(?command, "fastfetch command");
 

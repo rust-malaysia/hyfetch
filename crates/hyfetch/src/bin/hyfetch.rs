@@ -12,7 +12,7 @@ use hyfetch::models::Config;
 use hyfetch::neofetch_util::ensure_git_bash;
 use hyfetch::neofetch_util::{self, ascii_size, get_distro_ascii, literal_input, ColorAlignment};
 use hyfetch::presets::{AssignLightness, ColorProfile, Preset};
-use hyfetch::types::{AnsiMode, LightDark};
+use hyfetch::types::{AnsiMode, Backend, TerminalTheme};
 use hyfetch::utils::get_cache_path;
 use palette::Srgb;
 use strum::{EnumCount, VariantArray, VariantNames};
@@ -28,33 +28,53 @@ fn main() -> Result<()> {
 
     let options = options().run();
 
-    init_tracing_subsriber(options.debug).context("failed to init tracing subscriber")?;
+    let debug_mode = options.debug;
+
+    init_tracing_subsriber(debug_mode).context("failed to init tracing subscriber")?;
 
     debug!(?options, "CLI options");
 
     // Use a custom distro
     let distro = options.distro.as_ref();
 
+    let backend = options.backend.unwrap_or(Backend::Neofetch);
+    let use_overlay = options.overlay;
+
     #[cfg(windows)]
     ensure_git_bash().context("failed to find git bash")?;
 
     if options.test_print {
-        let (asc, _) = get_distro_ascii(distro).context("failed to get distro ascii")?;
+        let (asc, _) = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
         println!("{asc}");
         return Ok(());
     }
 
     let config = if options.config {
-        create_config(distro, &options.config_file, options.overlay, options.debug)
-            .context("failed to create config")?
+        create_config(
+            &options.config_file,
+            distro,
+            backend,
+            use_overlay,
+            debug_mode,
+        )
+        .context("failed to create config")?
     } else if let Some(config) =
         read_config(&options.config_file).context("failed to read config")?
     {
         config
     } else {
-        create_config(distro, &options.config_file, options.overlay, options.debug)
-            .context("failed to create config")?
+        create_config(
+            &options.config_file,
+            distro,
+            backend,
+            use_overlay,
+            debug_mode,
+        )
+        .context("failed to create config")?
     };
+
+    let color_mode = options.mode.unwrap_or(config.mode);
+    let theme = config.light_dark;
 
     // Check if it's June (pride month)
     let now =
@@ -83,7 +103,6 @@ fn main() -> Result<()> {
     // Use a custom distro
     let distro = options.distro.as_ref().or(config.distro.as_ref());
 
-    let color_mode = options.mode.unwrap_or(config.mode);
     let backend = options.backend.unwrap_or(config.backend);
     let args = options.args.as_ref().or(config.args.as_ref());
 
@@ -98,7 +117,7 @@ fn main() -> Result<()> {
     } else if let Some(lightness) = options.lightness {
         color_profile.with_lightness(AssignLightness::Replace(lightness))
     } else {
-        color_profile.with_lightness_dl(config.lightness(), config.light_dark, options.overlay)
+        color_profile.with_lightness_adaptive(config.lightness(), theme, use_overlay)
     };
     debug!(?color_profile, "lightened color profile");
 
@@ -109,7 +128,7 @@ fn main() -> Result<()> {
             None,
         )
     } else {
-        get_distro_ascii(distro).context("failed to get distro ascii")?
+        get_distro_ascii(distro, backend).context("failed to get distro ascii")?
     };
     let color_align = if fore_back.is_some() {
         match config.color_align {
@@ -124,7 +143,7 @@ fn main() -> Result<()> {
         config.color_align
     };
     let asc = color_align
-        .recolor_ascii(asc, color_profile, color_mode, config.light_dark)
+        .recolor_ascii(asc, color_profile, color_mode, theme)
         .context("failed to recolor ascii")?;
     neofetch_util::run(asc, backend, args)?;
 
@@ -174,8 +193,9 @@ fn read_config(path: &Path) -> Result<Option<Config>> {
 /// The config is automatically stored to file.
 #[tracing::instrument(level = "debug")]
 fn create_config(
-    distro: Option<&String>,
     path: &Path,
+    distro: Option<&String>,
+    backend: Backend,
     use_overlay: bool,
     debug_mode: bool,
 ) -> Result<Config> {
@@ -202,14 +222,15 @@ fn create_config(
     });
     debug!(?det_ansi, "detected color mode");
 
-    let (asc, fore_back) = get_distro_ascii(distro).context("failed to get distro ascii")?;
+    let (asc, fore_back) =
+        get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
     let (asc_width, asc_lines) = ascii_size(asc);
-    let theme = det_bg.map(|bg| bg.theme()).unwrap_or(LightDark::Light);
+    let theme = det_bg.map(|bg| bg.theme()).unwrap_or(TerminalTheme::Light);
     let color_mode = det_ansi.unwrap_or(AnsiMode::Ansi256);
     let logo = color(
         match theme {
-            LightDark::Light => "&l&bhyfetch&~&L",
-            LightDark::Dark => "&l&bhy&ffetch&~&L",
+            TerminalTheme::Light => "&l&bhyfetch&~&L",
+            TerminalTheme::Dark => "&l&bhy&ffetch&~&L",
         },
         color_mode,
     )
@@ -280,9 +301,9 @@ fn create_config(
     };
 
     //////////////////////////////
-    // 2. Select light/dark mode
+    // 2. Select theme (light/dark mode)
 
-    let select_light_dark = || -> Result<(LightDark, &str)> {
+    let select_theme = || -> Result<(TerminalTheme, &str)> {
         if let Some(det_bg) = det_bg {
             return Ok((det_bg.theme(), "Detected background color"));
         }
@@ -294,11 +315,10 @@ fn create_config(
     };
 
     let theme = {
-        let (light_dark, ttl) =
-            select_light_dark().context("failed to select light / dark mode")?;
-        debug!(?light_dark, "selected theme");
-        update_title(&mut title, &mut option_counter, ttl, light_dark.into());
-        light_dark
+        let (selected_theme, ttl) = select_theme().context("failed to select theme")?;
+        debug!(?selected_theme, "selected theme");
+        update_title(&mut title, &mut option_counter, ttl, selected_theme.into());
+        selected_theme
     };
 
     //////////////////////////////
@@ -400,7 +420,7 @@ fn create_config(
     let color_profile: ColorProfile;
     let preset_rainbow = Preset::Rainbow
         .color_profile()
-        .with_lightness_dl(Config::default_lightness(theme), theme, use_overlay)
+        .with_lightness_adaptive(Config::default_lightness(theme), theme, use_overlay)
         .color_text(
             "preset",
             color_mode,
@@ -421,7 +441,7 @@ fn create_config(
             opts.push("prev");
         }
         println!("Enter 'next' to go to the next page and 'prev' to go to the previous page.");
-        let preset = literal_input(
+        let selection = literal_input(
             format!("Which {preset_rainbow} do you want to use? "),
             &opts[..],
             Preset::Rainbow.into(),
@@ -429,18 +449,19 @@ fn create_config(
             color_mode,
         )
         .context("failed to select preset")?;
-        if preset == "next" {
+        if selection == "next" {
             page += 1;
-        } else if preset == "prev" {
+        } else if selection == "prev" {
             page -= 1;
         } else {
-            let preset: Preset = preset.parse().expect("selected preset should be valid");
-            debug!(?preset, "selected preset");
-            color_profile = preset.color_profile();
+            let selected_preset: Preset =
+                selection.parse().expect("selected preset should be valid");
+            debug!(?selected_preset, "selected preset");
+            color_profile = selected_preset.color_profile();
             {
-                let preset_name: &'static str = preset.into();
+                let preset_name: &'static str = selected_preset.into();
                 let preset_colored_name = color_profile
-                    .with_lightness_dl(Config::default_lightness(theme), theme, use_overlay)
+                    .with_lightness_adaptive(Config::default_lightness(theme), theme, use_overlay)
                     .color_text(
                         preset_name,
                         color_mode,
