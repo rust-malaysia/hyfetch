@@ -1,17 +1,23 @@
-use std::fmt;
+use std::borrow::Cow;
+use std::cmp;
 use std::fs::{self, File};
 use std::io::{self, ErrorKind, IsTerminal, Read};
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use chrono::Datelike;
 use hyfetch::cli_options::options;
+use hyfetch::color_util::{clear_screen, color, printc, ForegroundBackground, Theme};
 use hyfetch::models::Config;
 #[cfg(windows)]
 use hyfetch::neofetch_util::ensure_git_bash;
-use hyfetch::neofetch_util::{self, get_distro_ascii, ColorAlignment};
-use hyfetch::presets::AssignLightness;
+use hyfetch::neofetch_util::{self, ascii_size, get_distro_ascii, ColorAlignment};
+use hyfetch::presets::{AssignLightness, Preset};
+use hyfetch::types::{AnsiMode, LightDark};
 use hyfetch::utils::get_cache_path;
+use palette::Srgb;
+use strum::{EnumCount, VariantArray, VariantNames};
+use terminal_size::terminal_size;
+use time::{Month, OffsetDateTime};
 use tracing::debug;
 
 fn main() -> Result<()> {
@@ -39,21 +45,24 @@ fn main() -> Result<()> {
     }
 
     let config = if options.config {
-        create_config(options.config_file).context("failed to create config")?
+        create_config(distro, &options.config_file, options.debug)
+            .context("failed to create config")?
     } else if let Some(config) =
         read_config(&options.config_file).context("failed to read config")?
     {
         config
     } else {
-        create_config(options.config_file).context("failed to create config")?
+        create_config(distro, &options.config_file, options.debug)
+            .context("failed to create config")?
     };
 
     // Check if it's June (pride month)
-    let now = chrono::Local::now();
+    let now =
+        OffsetDateTime::now_local().context("failed to get current datetime in local timezone")?;
     let cache_path = get_cache_path().context("failed to get cache path")?;
     let june_path = cache_path.join(format!("animation-displayed-{}", now.year()));
-    let show_pride_month =
-        options.june || now.month() == 6 && !june_path.is_file() && io::stdout().is_terminal();
+    let show_pride_month = options.june
+        || now.month() == Month::June && !june_path.is_file() && io::stdout().is_terminal();
 
     if show_pride_month && !config.pride_month_disable {
         // TODO
@@ -134,12 +143,7 @@ fn main() -> Result<()> {
 ///
 /// Returns `None` if the config file does not exist.
 #[tracing::instrument(level = "debug")]
-fn read_config<P>(path: P) -> Result<Option<Config>>
-where
-    P: AsRef<Path> + fmt::Debug,
-{
-    let path = path.as_ref();
-
+fn read_config(path: &Path) -> Result<Option<Config>> {
     let mut file = match File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == ErrorKind::NotFound => {
@@ -168,10 +172,229 @@ where
 ///
 /// The config is automatically stored to file.
 #[tracing::instrument(level = "debug")]
-fn create_config<P>(path: P) -> Result<Config>
-where
-    P: AsRef<Path> + fmt::Debug,
-{
+fn create_config(distro: Option<&String>, path: &Path, debug_: bool) -> Result<Config> {
+    // Detect terminal environment (doesn't work for all terminal emulators,
+    // especially on Windows)
+    let det_bg = match termbg::rgb(std::time::Duration::from_millis(100)) {
+        Ok(rgb) => Some(Srgb::<u16>::new(rgb.r, rgb.g, rgb.b).into_format::<u8>()),
+        Err(termbg::Error::Unsupported) => None,
+        Err(err) => {
+            return Err(err).context("failed to get background color");
+        },
+    };
+    debug!(?det_bg, "detected background color");
+    let det_ansi = supports_color::on(supports_color::Stream::Stdout).map(|color_level| {
+        if color_level.has_16m {
+            AnsiMode::Rgb
+        } else if color_level.has_256 {
+            AnsiMode::Ansi256
+        } else if color_level.has_basic {
+            AnsiMode::Ansi16
+        } else {
+            unreachable!();
+        }
+    });
+    debug!(?det_ansi, "detected color mode");
+
+    let (asc, fore_back) = get_distro_ascii(distro).context("failed to get distro ascii")?;
+    let (asc_width, asc_lines) = ascii_size(asc);
+    let theme = det_bg.map(|bg| bg.theme()).unwrap_or(LightDark::Light);
+    let color_mode = det_ansi.unwrap_or(AnsiMode::Ansi256);
+    let logo = color(
+        match theme {
+            LightDark::Light => "&l&bhyfetch&~&L",
+            LightDark::Dark => "&l&bhy&ffetch&~&L",
+        },
+        color_mode,
+    )
+    .expect("logo should not contain invalid color codes");
+    let mut title = format!("Welcome to {logo} Let's set up some colors first.");
+    clear_screen(Some(&title), color_mode, debug_)
+        .expect("title should not contain invalid color codes");
+
+    let mut option_counter: u8 = 1;
+
+    fn update_title(title: &mut String, option_counter: &mut u8, k: &str, v: &str) {
+        let k: Cow<str> = if k.ends_with(':') {
+            k.into()
+        } else {
+            format!("{k}:").into()
+        };
+        title.push_str({
+            let pad = " ".repeat(30 - k.len());
+            &format!("\n&e{option_counter}. {k}{pad} &~{v}")
+        });
+        *option_counter += 1;
+    }
+
+    fn print_title_prompt(option_counter: u8, prompt: &str, color_mode: AnsiMode) {
+        printc(format!("&a{option_counter}. {prompt}"), color_mode)
+            .expect("prompt should not contain invalid color codes");
+    }
+
+    //////////////////////////////
+    // 0. Check term size
+
+    // TODO
+
+    //////////////////////////////
+    // 1. Select color system
+    let select_color_system = || -> Result<(AnsiMode, &str)> {
+        if det_ansi == Some(AnsiMode::Rgb) {
+            return Ok((AnsiMode::Rgb, "Detected color mode"));
+        }
+
+        clear_screen(Some(&title), color_mode, debug_)
+            .expect("title should not contain invalid color codes");
+
+        // TODO
+
+        println!();
+        print_title_prompt(
+            option_counter,
+            "Which &bcolor system &ado you want to use?",
+            color_mode,
+        );
+        printc(
+            r#"(If you can't see colors under "RGB Color Testing", please choose 8bit)"#,
+            color_mode,
+        )
+        .expect("message should not contain invalid color codes");
+        println!();
+
+        todo!()
+    };
+
+    let color_mode = {
+        let (color_system, ttl) = select_color_system().context("failed to select color system")?;
+        debug!(?color_system, "selected color mode");
+        update_title(&mut title, &mut option_counter, ttl, color_system.into());
+        color_system
+    };
+
+    //////////////////////////////
+    // 2. Select light/dark mode
+    let select_light_dark = || -> Result<(LightDark, &str)> {
+        if let Some(det_bg) = det_bg {
+            return Ok((det_bg.theme(), "Detected background color"));
+        }
+
+        clear_screen(Some(&title), color_mode, debug_)
+            .expect("title should not contain invalid color codes");
+
+        todo!()
+    };
+
+    let theme = {
+        let (light_dark, ttl) =
+            select_light_dark().context("failed to select light / dark mode")?;
+        debug!(?light_dark, "selected theme");
+        update_title(&mut title, &mut option_counter, ttl, light_dark.into());
+        light_dark
+    };
+
+    //////////////////////////////
+    // 3. Choose preset
+    // Create flag lines
+    let mut flags = Vec::with_capacity(Preset::COUNT);
+    let spacing = {
+        let Some(spacing) = <Preset as VariantNames>::VARIANTS
+            .iter()
+            .map(|name| name.chars().count())
+            .max()
+        else {
+            unreachable!();
+        };
+        let spacing: u8 = spacing.try_into().expect("`spacing` should fit in `u8`");
+        cmp::max(spacing, 20)
+    };
+    for preset in <Preset as VariantArray>::VARIANTS {
+        let color_profile = preset.color_profile();
+        let flag = color_profile
+            .color_text(
+                " ".repeat(spacing as usize),
+                color_mode,
+                ForegroundBackground::Background,
+                false,
+            )
+            .with_context(|| format!("failed to color flag using preset: {preset:?}"))?;
+        let name = {
+            let name: &'static str = preset.into();
+            let name_len = name.chars().count();
+            let name_len: u8 = name_len.try_into().expect("`name_len` should fit in `u8`");
+            let pad_start = " ".repeat(((spacing - name_len) / 2) as usize);
+            let pad_end =
+                " ".repeat(((spacing - name_len) / 2 + (spacing - name_len) % 2) as usize);
+            format!("{pad_start}{name}{pad_end}")
+        };
+        flags.push([name, flag.clone(), flag.clone(), flag]);
+    }
+
+    // Calculate flags per row
+    let (flags_per_row, rows_per_page) = {
+        let (term_w, term_h) = terminal_size().context("failed to get terminal size")?;
+        let flags_per_row = term_w.0 / (spacing as u16 + 2);
+        let flags_per_row: u8 = flags_per_row
+            .try_into()
+            .expect("`flags_per_row` should fit in `u8`");
+        let rows_per_page = ((term_h.0 - 13) as f32 / 5.0).floor() as usize;
+        let rows_per_page: u8 = rows_per_page
+            .try_into()
+            .expect("`rows_per_page` should fit in `u8`");
+        let rows_per_page = cmp::max(1, rows_per_page);
+        (flags_per_row, rows_per_page)
+    };
+    let num_pages = (Preset::COUNT as f32 / (flags_per_row * rows_per_page) as f32).ceil() as usize;
+    let num_pages: u8 = num_pages
+        .try_into()
+        .expect("`num_pages` should fit in `u8`");
+
+    // Create pages
+    let mut pages = Vec::with_capacity(num_pages as usize);
+    for flags in flags.chunks((flags_per_row * rows_per_page) as usize) {
+        let mut page = Vec::with_capacity(rows_per_page as usize);
+        for flags in flags.chunks(flags_per_row as usize) {
+            page.push(flags);
+        }
+        pages.push(page);
+    }
+
+    let print_flag_row = |row: &[[String; 4]]| {
+        for i in 0..4 {
+            let mut line = String::new();
+            for flag in row {
+                line.push_str(&flag[i]);
+                line.push_str("  ");
+            }
+            printc(line, color_mode).expect("flag line should not contain invalid color codes");
+        }
+        println!();
+    };
+
+    let print_flag_page = |page, page_num| {
+        clear_screen(Some(&title), color_mode, debug_)
+            .expect("title should not contain invalid color codes");
+        print_title_prompt(option_counter, "Let's choose a flag!", color_mode);
+        printc("Available flag presets:", color_mode)
+            .expect("prompt should not contain invalid color codes");
+        {
+            let page_num = page_num + 1;
+            println!("Page: {page_num} of {num_pages}");
+        }
+        println!();
+        for &row in page {
+            print_flag_row(row);
+        }
+        println!();
+    };
+
+    let page: u8 = 0;
+    loop {
+        print_flag_page(&pages[page as usize], page);
+
+        todo!();
+    }
+
     todo!()
 }
 

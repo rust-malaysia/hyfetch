@@ -6,11 +6,11 @@ use aho_corasick::AhoCorasick;
 use ansi_colours::AsRGB;
 use anyhow::{anyhow, Context, Result};
 use deranged::RangedU8;
-use palette::Srgb;
+use palette::{IntoColorMut, LinSrgb, Okhsl, Srgb};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::types::AnsiMode;
+use crate::types::{AnsiMode, LightDark};
 
 const MINECRAFT_COLORS: [(&str, &str); 30] = [
     // Minecraft formatting codes
@@ -53,10 +53,12 @@ const RGB_COLOR_PATTERNS: [&str; 2] = ["&gf(", "&gb("];
 static MINECRAFT_COLORS_AC: OnceLock<(AhoCorasick, Box<[&str; 30]>)> = OnceLock::new();
 static RGB_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
 
-/// Represents the lightness component in HSL.
+/// Represents the lightness component in [`Okhsl`].
 ///
 /// The range of valid values is
 /// `(`[`Lightness::MIN`]`..=`[`Lightness::MAX`]`)`.
+///
+/// [`Okhsl`]: palette::Okhsl
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Deserialize, Serialize)]
 pub struct Lightness(f32);
 
@@ -110,9 +112,13 @@ pub trait ToAnsiString {
         -> String;
 }
 
+pub trait Theme {
+    fn theme(&self) -> LightDark;
+}
+
 impl Lightness {
-    const MAX: f32 = 1.0f32;
-    const MIN: f32 = 0.0f32;
+    pub const MAX: f32 = 1.0f32;
+    pub const MIN: f32 = 0.0f32;
 
     pub fn new(value: f32) -> Result<Self, LightnessError> {
         if !(Self::MIN..=Self::MAX).contains(&value) {
@@ -146,8 +152,8 @@ impl From<Lightness> for f32 {
 }
 
 impl NeofetchAsciiIndexedColor {
-    const MAX: u8 = 6;
-    const MIN: u8 = 1;
+    pub const MAX: u8 = 6;
+    pub const MIN: u8 = 1;
 }
 
 impl TryFrom<u8> for NeofetchAsciiIndexedColor {
@@ -212,6 +218,25 @@ impl ToAnsiString for Srgb<u8> {
                 let indexed = rgb.to_ansi256();
                 format!("\x1b[{c};5;{indexed}m")
             },
+            AnsiMode::Ansi16 => {
+                unimplemented!();
+            },
+        }
+    }
+}
+
+impl Theme for Srgb<u8> {
+    fn theme(&self) -> LightDark {
+        let mut rgb_f32_color: LinSrgb = self.into_linear();
+
+        {
+            let okhsl_f32_color: &mut Okhsl = &mut rgb_f32_color.into_color_mut();
+
+            if okhsl_f32_color.lightness > 0.5 {
+                LightDark::Light
+            } else {
+                LightDark::Dark
+            }
         }
     }
 }
@@ -310,4 +335,32 @@ where
     }
 
     Ok(dst)
+}
+
+pub fn printc<S>(msg: S, mode: AnsiMode) -> Result<()>
+where
+    S: AsRef<str>,
+{
+    let msg = msg.as_ref();
+
+    println!(
+        "{}",
+        color(format!("{msg}&r"), mode).context("failed to color message")?
+    );
+
+    Ok(())
+}
+
+pub fn clear_screen(title: Option<&str>, mode: AnsiMode, debug: bool) -> Result<()> {
+    if !debug {
+        print!("\x1b[2J\x1b[H");
+    }
+
+    if let Some(title) = title {
+        println!();
+        printc(title, mode).context("failed to color title")?;
+        println!();
+    }
+
+    Ok(())
 }
