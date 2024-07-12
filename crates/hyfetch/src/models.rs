@@ -3,13 +3,13 @@ use serde::{Deserialize, Serialize};
 use crate::color_util::Lightness;
 use crate::neofetch_util::ColorAlignment;
 use crate::presets::Preset;
-use crate::types::{AnsiMode, Backend, LightDark};
+use crate::types::{AnsiMode, Backend, TerminalTheme};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub preset: Preset,
     pub mode: AnsiMode,
-    pub light_dark: LightDark,
+    pub light_dark: TerminalTheme,
     lightness: Option<Lightness>,
     pub color_align: ColorAlignment,
     pub backend: Backend,
@@ -21,12 +21,12 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn default_lightness(term: LightDark) -> Lightness {
-        match term {
-            LightDark::Dark => {
+    pub fn default_lightness(theme: TerminalTheme) -> Lightness {
+        match theme {
+            TerminalTheme::Dark => {
                 Lightness::new(0.65).expect("default lightness should not be invalid")
             },
-            LightDark::Light => {
+            TerminalTheme::Light => {
                 Lightness::new(0.4).expect("default lightness should not be invalid")
             },
         }

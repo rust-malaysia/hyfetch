@@ -23,7 +23,7 @@ pub enum AnsiMode {
 )]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
-pub enum LightDark {
+pub enum TerminalTheme {
     Light,
     Dark,
 }
