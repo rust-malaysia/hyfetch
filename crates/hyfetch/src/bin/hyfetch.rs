@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::cmp;
 use std::fs::{self, File};
-use std::io::{self, ErrorKind, IsTerminal, Read};
+use std::io::{self, ErrorKind, IsTerminal, Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -10,8 +10,8 @@ use hyfetch::color_util::{clear_screen, color, printc, ForegroundBackground, The
 use hyfetch::models::Config;
 #[cfg(windows)]
 use hyfetch::neofetch_util::ensure_git_bash;
-use hyfetch::neofetch_util::{self, ascii_size, get_distro_ascii, ColorAlignment};
-use hyfetch::presets::{AssignLightness, Preset};
+use hyfetch::neofetch_util::{self, ascii_size, get_distro_ascii, literal_input, ColorAlignment};
+use hyfetch::presets::{AssignLightness, ColorProfile, Preset};
 use hyfetch::types::{AnsiMode, LightDark};
 use hyfetch::utils::get_cache_path;
 use palette::Srgb;
@@ -45,14 +45,14 @@ fn main() -> Result<()> {
     }
 
     let config = if options.config {
-        create_config(distro, &options.config_file, options.debug)
+        create_config(distro, &options.config_file, options.overlay, options.debug)
             .context("failed to create config")?
     } else if let Some(config) =
         read_config(&options.config_file).context("failed to read config")?
     {
         config
     } else {
-        create_config(distro, &options.config_file, options.debug)
+        create_config(distro, &options.config_file, options.overlay, options.debug)
             .context("failed to create config")?
     };
 
@@ -130,6 +130,7 @@ fn main() -> Result<()> {
 
     if options.ask_exit {
         print!("Press any key to exit...");
+        io::stdout().flush()?;
         let mut buf = String::new();
         io::stdin()
             .read_line(&mut buf)
@@ -172,7 +173,12 @@ fn read_config(path: &Path) -> Result<Option<Config>> {
 ///
 /// The config is automatically stored to file.
 #[tracing::instrument(level = "debug")]
-fn create_config(distro: Option<&String>, path: &Path, debug_: bool) -> Result<Config> {
+fn create_config(
+    distro: Option<&String>,
+    path: &Path,
+    use_overlay: bool,
+    debug_mode: bool,
+) -> Result<Config> {
     // Detect terminal environment (doesn't work for all terminal emulators,
     // especially on Windows)
     let det_bg = match termbg::rgb(std::time::Duration::from_millis(100)) {
@@ -209,7 +215,7 @@ fn create_config(distro: Option<&String>, path: &Path, debug_: bool) -> Result<C
     )
     .expect("logo should not contain invalid color codes");
     let mut title = format!("Welcome to {logo} Let's set up some colors first.");
-    clear_screen(Some(&title), color_mode, debug_)
+    clear_screen(Some(&title), color_mode, debug_mode)
         .expect("title should not contain invalid color codes");
 
     let mut option_counter: u8 = 1;
@@ -239,12 +245,13 @@ fn create_config(distro: Option<&String>, path: &Path, debug_: bool) -> Result<C
 
     //////////////////////////////
     // 1. Select color system
+
     let select_color_system = || -> Result<(AnsiMode, &str)> {
         if det_ansi == Some(AnsiMode::Rgb) {
             return Ok((AnsiMode::Rgb, "Detected color mode"));
         }
 
-        clear_screen(Some(&title), color_mode, debug_)
+        clear_screen(Some(&title), color_mode, debug_mode)
             .expect("title should not contain invalid color codes");
 
         // TODO
@@ -274,12 +281,13 @@ fn create_config(distro: Option<&String>, path: &Path, debug_: bool) -> Result<C
 
     //////////////////////////////
     // 2. Select light/dark mode
+
     let select_light_dark = || -> Result<(LightDark, &str)> {
         if let Some(det_bg) = det_bg {
             return Ok((det_bg.theme(), "Detected background color"));
         }
 
-        clear_screen(Some(&title), color_mode, debug_)
+        clear_screen(Some(&title), color_mode, debug_mode)
             .expect("title should not contain invalid color codes");
 
         todo!()
@@ -295,6 +303,7 @@ fn create_config(distro: Option<&String>, path: &Path, debug_: bool) -> Result<C
 
     //////////////////////////////
     // 3. Choose preset
+
     // Create flag lines
     let mut flags = Vec::with_capacity(Preset::COUNT);
     let spacing = {
@@ -372,7 +381,7 @@ fn create_config(distro: Option<&String>, path: &Path, debug_: bool) -> Result<C
     };
 
     let print_flag_page = |page, page_num| {
-        clear_screen(Some(&title), color_mode, debug_)
+        clear_screen(Some(&title), color_mode, debug_mode)
             .expect("title should not contain invalid color codes");
         print_title_prompt(option_counter, "Let's choose a flag!", color_mode);
         printc("Available flag presets:", color_mode)
@@ -388,17 +397,77 @@ fn create_config(distro: Option<&String>, path: &Path, debug_: bool) -> Result<C
         println!();
     };
 
-    let page: u8 = 0;
+    let color_profile: ColorProfile;
+    let preset_rainbow = Preset::Rainbow
+        .color_profile()
+        .with_lightness_dl(Config::default_lightness(theme), theme, use_overlay)
+        .color_text(
+            "preset",
+            color_mode,
+            ForegroundBackground::Foreground,
+            false,
+        )
+        .expect("coloring text with rainbow preset should not fail");
+
+    let mut page: u8 = 0;
     loop {
         print_flag_page(&pages[page as usize], page);
 
-        todo!();
+        let mut opts = Vec::from(<Preset as VariantNames>::VARIANTS);
+        if page < num_pages - 1 {
+            opts.push("next");
+        }
+        if page > 0 {
+            opts.push("prev");
+        }
+        println!("Enter 'next' to go to the next page and 'prev' to go to the previous page.");
+        let preset = literal_input(
+            format!("Which {preset_rainbow} do you want to use? "),
+            &opts[..],
+            Preset::Rainbow.into(),
+            false,
+            color_mode,
+        )
+        .context("failed to select preset")?;
+        if preset == "next" {
+            page += 1;
+        } else if preset == "prev" {
+            page -= 1;
+        } else {
+            let preset: Preset = preset.parse().expect("selected preset should be valid");
+            debug!(?preset, "selected preset");
+            color_profile = preset.color_profile();
+            {
+                let preset_name: &'static str = preset.into();
+                let preset_colored_name = color_profile
+                    .with_lightness_dl(Config::default_lightness(theme), theme, use_overlay)
+                    .color_text(
+                        preset_name,
+                        color_mode,
+                        ForegroundBackground::Foreground,
+                        false,
+                    )
+                    .expect("coloring text with selected preset should not fail");
+                update_title(
+                    &mut title,
+                    &mut option_counter,
+                    "Selected flag",
+                    &preset_colored_name,
+                );
+            }
+            break;
+        }
     }
+
+    //////////////////////////////
+    // 4. Dim/lighten colors
+
+    // TODO
 
     todo!()
 }
 
-fn init_tracing_subsriber(debug: bool) -> Result<()> {
+fn init_tracing_subsriber(debug_mode: bool) -> Result<()> {
     use std::env;
     use std::str::FromStr;
 
@@ -432,7 +501,7 @@ fn init_tracing_subsriber(debug: bool) -> Result<()> {
                 Targets::new().with_default(Subscriber::DEFAULT_MAX_LEVEL)
             },
         };
-        let targets = if debug {
+        let targets = if debug_mode {
             targets.with_target(env!("CARGO_CRATE_NAME"), Level::DEBUG)
         } else {
             targets

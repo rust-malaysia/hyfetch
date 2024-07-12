@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
 use std::sync::OnceLock;
@@ -337,6 +338,7 @@ where
     Ok(dst)
 }
 
+/// Prints with color.
 pub fn printc<S>(msg: S, mode: AnsiMode) -> Result<()>
 where
     S: AsRef<str>,
@@ -351,9 +353,11 @@ where
     Ok(())
 }
 
-pub fn clear_screen(title: Option<&str>, mode: AnsiMode, debug: bool) -> Result<()> {
-    if !debug {
+/// Clears screen using ANSI escape codes.
+pub fn clear_screen(title: Option<&str>, mode: AnsiMode, debug_mode: bool) -> Result<()> {
+    if !debug_mode {
         print!("\x1b[2J\x1b[H");
+        io::stdout().flush()?;
     }
 
     if let Some(title) = title {

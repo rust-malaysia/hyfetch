@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -17,7 +17,8 @@ use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::color_util::{
-    color, ForegroundBackground, NeofetchAsciiIndexedColor, PresetIndexedColor, ToAnsiString,
+    color, printc, ForegroundBackground, NeofetchAsciiIndexedColor, PresetIndexedColor,
+    ToAnsiString,
 };
 use crate::distros::Distro;
 use crate::presets::ColorProfile;
@@ -281,6 +282,83 @@ impl ColorAlignment {
             Distro::Antergos => Some((1u8.try_into().unwrap(), 2u8.try_into().unwrap())),
 
             _ => None,
+        }
+    }
+}
+
+/// Asks the user to provide an input among a list of options.
+pub fn literal_input<'a, S>(
+    prompt: S,
+    options: &[&'a str],
+    default: &str,
+    show_options: bool,
+    color_mode: AnsiMode,
+) -> Result<&'a str>
+where
+    S: AsRef<str>,
+{
+    let prompt = prompt.as_ref();
+
+    if show_options {
+        let options_text = options
+            .iter()
+            .map(|&o| {
+                if o == default {
+                    format!("&l&n{o}&L&N")
+                } else {
+                    o.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        printc(format!("{prompt} ({options_text})"), color_mode)
+            .context("failed to print input prompt")?;
+    } else {
+        printc(format!("{prompt} (default: {default})"), color_mode)
+            .context("failed to print input prompt")?;
+    }
+
+    let find_selection = |sel: &str| {
+        if sel.is_empty() {
+            return None;
+        }
+
+        // Find exact match
+        if let Some(selected) = options.iter().find(|&&o| o.to_lowercase() == sel) {
+            return Some(selected);
+        }
+
+        // Find starting abbreviation
+        if let Some(selected) = options.iter().find(|&&o| o.to_lowercase().starts_with(sel)) {
+            return Some(selected);
+        }
+
+        None
+    };
+
+    loop {
+        let mut buf = String::new();
+        print!("> ");
+        io::stdout().flush()?;
+        io::stdin()
+            .read_line(&mut buf)
+            .context("failed to read line from input")?;
+        let selection = {
+            let selection = buf.trim_end_matches(&['\r', '\n']);
+            if selection.is_empty() {
+                default.to_owned()
+            } else {
+                selection.to_lowercase()
+            }
+        };
+
+        if let Some(selected) = find_selection(&selection) {
+            println!();
+
+            return Ok(selected);
+        } else {
+            let options_text = options.join("|");
+            println!("Invalid selection! {selection} is not one of {options_text}");
         }
     }
 }
