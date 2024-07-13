@@ -53,8 +53,8 @@ pub fn options() -> OptionParser<Options> {
         .short('p')
         .help(&*format!(
             "Use preset
-PRESET={{{}}}",
-            Preset::VARIANTS.join(",")
+PRESET={{{presets}}}",
+            presets = Preset::VARIANTS.join(",")
         ))
         .argument("PRESET");
     #[cfg(feature = "autocomplete")]
@@ -62,7 +62,10 @@ PRESET={{{}}}",
     let preset = preset
         .parse(|s| {
             Preset::from_str(&s).with_context(|| {
-                format!("PRESET should be one of {{{}}}", Preset::VARIANTS.join(","))
+                format!(
+                    "PRESET should be one of {{{presets}}}",
+                    presets = Preset::VARIANTS.join(",")
+                )
             })
         })
         .optional();
@@ -70,8 +73,8 @@ PRESET={{{}}}",
         .short('m')
         .help(&*format!(
             "Color mode
-MODE={{{}}}",
-            AnsiMode::VARIANTS.join(",")
+MODE={{{modes}}}",
+            modes = AnsiMode::VARIANTS.join(",")
         ))
         .argument("MODE");
     #[cfg(feature = "autocomplete")]
@@ -79,7 +82,10 @@ MODE={{{}}}",
     let mode = mode
         .parse(|s| {
             AnsiMode::from_str(&s).with_context(|| {
-                format!("MODE should be one of {{{}}}", AnsiMode::VARIANTS.join(","))
+                format!(
+                    "MODE should be one of {{{modes}}}",
+                    modes = AnsiMode::VARIANTS.join(",")
+                )
             })
         })
         .optional();
@@ -87,8 +93,8 @@ MODE={{{}}}",
         .short('b')
         .help(&*format!(
             "Choose a *fetch backend
-BACKEND={{{}}}",
-            Backend::VARIANTS.join(",")
+BACKEND={{{backends}}}",
+            backends = Backend::VARIANTS.join(",")
         ))
         .argument("BACKEND");
     #[cfg(feature = "autocomplete")]
@@ -97,8 +103,8 @@ BACKEND={{{}}}",
         .parse(|s| {
             Backend::from_str(&s).with_context(|| {
                 format!(
-                    "BACKEND should be one of {{{}}}",
-                    Backend::VARIANTS.join(",")
+                    "BACKEND should be one of {{{backends}}}",
+                    backends = Backend::VARIANTS.join(",")
                 )
             })
         })

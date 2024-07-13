@@ -78,13 +78,16 @@ impl ColorAlignment {
 
     /// Uses the color alignment to recolor an ascii art.
     #[tracing::instrument(level = "debug", skip(asc))]
-    pub fn recolor_ascii(
+    pub fn recolor_ascii<S>(
         &self,
-        asc: String,
-        color_profile: ColorProfile,
+        asc: S,
+        color_profile: &ColorProfile,
         color_mode: AnsiMode,
         theme: TerminalTheme,
-    ) -> Result<String> {
+    ) -> Result<String>
+    where
+        S: AsRef<str>,
+    {
         let reset = color("&~&*", color_mode).expect("color reset should not be invalid");
 
         let asc = match self {
@@ -94,15 +97,12 @@ impl ColorAlignment {
             | &Self::Vertical {
                 fore_back: Some((fore, back)),
             } => {
-                let fore: u8 = fore.into();
-                let back: u8 = back.into();
-
                 let asc = fill_starting(asc)
                     .context("failed to fill in starting neofetch color codes")?;
 
                 // Replace foreground colors
                 let asc = asc.replace(
-                    &format!("${{c{fore}}}"),
+                    &format!("${{c{fore}}}", fore = u8::from(fore)),
                     &color(
                         match theme {
                             TerminalTheme::Light => "&0",
@@ -129,7 +129,7 @@ impl ColorAlignment {
                         let mut asc = String::new();
                         for (i, line) in lines.into_iter().enumerate() {
                             let line = line.replace(
-                                &format!("${{c{back}}}"),
+                                &format!("${{c{back}}}", back = u8::from(back)),
                                 &colors[i].to_ansi_string(color_mode, {
                                     // note: this is "background" in the ascii art, but foreground
                                     // text in terminal
@@ -170,7 +170,7 @@ impl ColorAlignment {
                         .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
                     const N: usize = NEOFETCH_COLOR_PATTERNS.len();
                     const REPLACEMENTS: [&str; N] = [""; N];
-                    ac.replace_all(&asc, &REPLACEMENTS)
+                    ac.replace_all(asc.as_ref(), &REPLACEMENTS)
                 };
 
                 let lines: Vec<_> = asc.split('\n').collect();
@@ -301,9 +301,8 @@ pub fn neofetch_path() -> Result<Option<PathBuf>> {
                 ));
             },
             Err(err) => {
-                return Err(err).with_context(|| {
-                    format!("failed to check for existence of {workspace_path:?}")
-                });
+                return Err(err)
+                    .with_context(|| format!("failed to check existence of {workspace_path:?}"));
             },
         };
         let neofetch_path = workspace_path.join("neofetch");

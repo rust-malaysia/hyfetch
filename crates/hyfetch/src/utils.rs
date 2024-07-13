@@ -95,8 +95,8 @@ pub fn process_command_status(status: &ExitStatus) -> Result<()> {
         #[cfg(unix)]
         {
             anyhow!(
-                "child process terminated by signal: {}",
-                status
+                "child process terminated by signal: {signal}",
+                signal = status
                     .signal()
                     .expect("either one of status code or signal should be set")
             )

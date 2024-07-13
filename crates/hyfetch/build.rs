@@ -25,7 +25,10 @@ impl AsciiDistro {
 fn main() {
     let neofetch_path = Path::new(env!("CARGO_WORKSPACE_DIR")).join("neofetch");
 
-    println!("cargo:rerun-if-changed={}", neofetch_path.display());
+    println!(
+        "cargo:rerun-if-changed={neofetch_path}",
+        neofetch_path = neofetch_path.display()
+    );
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir);
