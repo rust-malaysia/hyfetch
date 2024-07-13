@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -17,8 +17,7 @@ use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::color_util::{
-    color, printc, ForegroundBackground, NeofetchAsciiIndexedColor, PresetIndexedColor,
-    ToAnsiString,
+    color, ForegroundBackground, NeofetchAsciiIndexedColor, PresetIndexedColor, ToAnsiString,
 };
 use crate::distros::Distro;
 use crate::presets::ColorProfile;
@@ -286,83 +285,6 @@ impl ColorAlignment {
     }
 }
 
-/// Asks the user to provide an input among a list of options.
-pub fn literal_input<'a, S>(
-    prompt: S,
-    options: &[&'a str],
-    default: &str,
-    show_options: bool,
-    color_mode: AnsiMode,
-) -> Result<&'a str>
-where
-    S: AsRef<str>,
-{
-    let prompt = prompt.as_ref();
-
-    if show_options {
-        let options_text = options
-            .iter()
-            .map(|&o| {
-                if o == default {
-                    format!("&l&n{o}&L&N")
-                } else {
-                    o.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("|");
-        printc(format!("{prompt} ({options_text})"), color_mode)
-            .context("failed to print input prompt")?;
-    } else {
-        printc(format!("{prompt} (default: {default})"), color_mode)
-            .context("failed to print input prompt")?;
-    }
-
-    let find_selection = |sel: &str| {
-        if sel.is_empty() {
-            return None;
-        }
-
-        // Find exact match
-        if let Some(selected) = options.iter().find(|&&o| o.to_lowercase() == sel) {
-            return Some(selected);
-        }
-
-        // Find starting abbreviation
-        if let Some(selected) = options.iter().find(|&&o| o.to_lowercase().starts_with(sel)) {
-            return Some(selected);
-        }
-
-        None
-    };
-
-    loop {
-        let mut buf = String::new();
-        print!("> ");
-        io::stdout().flush()?;
-        io::stdin()
-            .read_line(&mut buf)
-            .context("failed to read line from input")?;
-        let selection = {
-            let selection = buf.trim_end_matches(&['\r', '\n']);
-            if selection.is_empty() {
-                default.to_owned()
-            } else {
-                selection.to_lowercase()
-            }
-        };
-
-        if let Some(selected) = find_selection(&selection) {
-            println!();
-
-            return Ok(selected);
-        } else {
-            let options_text = options.join("|");
-            println!("Invalid selection! {selection} is not one of {options_text}");
-        }
-    }
-}
-
 /// Gets the absolute path of the neofetch command.
 pub fn neofetch_path() -> Result<Option<PathBuf>> {
     if let Some(workspace_dir) = env::var_os("CARGO_WORKSPACE_DIR") {
@@ -424,39 +346,91 @@ pub fn neofetch_path() -> Result<Option<PathBuf>> {
 /// Returns the path to git bash.
 #[cfg(windows)]
 pub fn ensure_git_bash() -> Result<PathBuf> {
+    // Find `bash.exe` in `PATH`, but exclude the known bad paths
     let git_bash_path = {
-        // Bundled git bash
+        let bash_path = find_in_path("bash.exe")
+            .context("failed to check existence of `bash.exe` in `PATH`")?;
+        match bash_path {
+            Some(bash_path) if bash_path.ends_with(r"Git\usr\bin\bash.exe") => {
+                // See https://stackoverflow.com/a/58418686/1529493
+                None
+            },
+            Some(bash_path) => {
+                // See https://github.com/hykilpikonna/hyfetch/issues/233
+                let windir = env::var_os("windir")
+                    .context("`windir` environment variable is not set or invalid")?;
+                if bash_path == Path::new(&windir).join(r"System32\bash.exe") {
+                    None
+                } else {
+                    Some(bash_path)
+                }
+            },
+            _ => bash_path,
+        }
+    };
+
+    // Detect any Git for Windows installation in `PATH`
+    let git_bash_path = if git_bash_path.is_some() {
+        git_bash_path
+    } else {
+        let git_path =
+            find_in_path("git.exe").context("failed to check existence of `git.exe` in `PATH`")?;
+        match git_path {
+            Some(git_path) if git_path.ends_with(r"Git\cmd\git.exe") => {
+                let bash_path = git_path
+                    .parent()
+                    .expect("parent should not be `None`")
+                    .parent()
+                    .expect("parent should not be `None`")
+                    .join(r"bin\bash.exe");
+                if bash_path.is_file() {
+                    Some(bash_path)
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        }
+    };
+
+    // Fall back to default Git for Windows installation paths
+    let git_bash_path = git_bash_path
+        .or_else(|| {
+            let program_files_dir = env::var_os("ProgramFiles")?;
+            let bash_path = Path::new(&program_files_dir).join(r"Git\bin\bash.exe");
+            if bash_path.is_file() {
+                Some(bash_path)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            let program_files_x86_dir = env::var_os("ProgramFiles(x86)")?;
+            let bash_path = Path::new(&program_files_x86_dir).join(r"Git\bin\bash.exe");
+            if bash_path.is_file() {
+                Some(bash_path)
+            } else {
+                None
+            }
+        });
+
+    // Bundled git bash
+    let git_bash_path = if git_bash_path.is_some() {
+        git_bash_path
+    } else {
         let current_exe_path = env::current_exe()
             .and_then(|p| p.normalize().map(|p| p.into()))
             .context("failed to get path of current running executable")?;
         let bash_path = current_exe_path
             .parent()
             .expect("parent should not be `None`")
-            .join("git/bin/bash.exe");
+            .join(r"git\bin\bash.exe");
         if bash_path.is_file() {
             Some(bash_path)
         } else {
             None
         }
     };
-    let git_bash_path = git_bash_path.or_else(|| {
-        let program_files_path = env::var_os("ProgramFiles")?;
-        let bash_path = Path::new(&program_files_path).join("Git/bin/bash.exe");
-        if bash_path.is_file() {
-            Some(bash_path)
-        } else {
-            None
-        }
-    });
-    let git_bash_path = git_bash_path.or_else(|| {
-        let program_files_x86_path = env::var_os("ProgramFiles(x86)")?;
-        let bash_path = Path::new(&program_files_x86_path).join("Git/bin/bash.exe");
-        if bash_path.is_file() {
-            Some(bash_path)
-        } else {
-            None
-        }
-    });
 
     let git_bash_path = git_bash_path.context("failed to find git bash executable")?;
 
@@ -756,6 +730,13 @@ fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
 fn fastfetch_path() -> Result<Option<PathBuf>> {
     let fastfetch_path =
         find_in_path("fastfetch").context("failed to check existence of `fastfetch` in `PATH`")?;
+    #[cfg(windows)]
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        find_in_path("fastfetch.exe")
+            .context("failed to check existence of `fastfetch.exe` in `PATH`")?
+    };
 
     // Fall back to `fastfetch` in directory of current executable
     let current_exe_path = env::current_exe()
@@ -782,7 +763,6 @@ fn fastfetch_path() -> Result<Option<PathBuf>> {
     };
 
     // Bundled fastfetch
-    #[cfg(unix)]
     let fastfetch_path = if fastfetch_path.is_some() {
         fastfetch_path
     } else {
@@ -801,7 +781,7 @@ fn fastfetch_path() -> Result<Option<PathBuf>> {
     let fastfetch_path = if fastfetch_path.is_some() {
         fastfetch_path
     } else {
-        let fastfetch_path = current_exe_dir_path.join("fastfetch/fastfetch.exe");
+        let fastfetch_path = current_exe_dir_path.join(r"fastfetch\fastfetch.exe");
         find_file(&fastfetch_path)
             .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
     };

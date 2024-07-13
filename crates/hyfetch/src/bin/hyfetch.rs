@@ -10,7 +10,7 @@ use hyfetch::color_util::{clear_screen, color, printc, ForegroundBackground, The
 use hyfetch::models::Config;
 #[cfg(windows)]
 use hyfetch::neofetch_util::ensure_git_bash;
-use hyfetch::neofetch_util::{self, ascii_size, get_distro_ascii, literal_input, ColorAlignment};
+use hyfetch::neofetch_util::{self, ascii_size, get_distro_ascii, ColorAlignment};
 use hyfetch::presets::{AssignLightness, ColorProfile, Preset};
 use hyfetch::types::{AnsiMode, Backend, TerminalTheme};
 use hyfetch::utils::get_cache_path;
@@ -486,6 +486,83 @@ fn create_config(
     // TODO
 
     todo!()
+}
+
+/// Asks the user to provide an input among a list of options.
+fn literal_input<'a, S>(
+    prompt: S,
+    options: &[&'a str],
+    default: &str,
+    show_options: bool,
+    color_mode: AnsiMode,
+) -> Result<&'a str>
+where
+    S: AsRef<str>,
+{
+    let prompt = prompt.as_ref();
+
+    if show_options {
+        let options_text = options
+            .iter()
+            .map(|&o| {
+                if o == default {
+                    format!("&l&n{o}&L&N")
+                } else {
+                    o.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        printc(format!("{prompt} ({options_text})"), color_mode)
+            .context("failed to print input prompt")?;
+    } else {
+        printc(format!("{prompt} (default: {default})"), color_mode)
+            .context("failed to print input prompt")?;
+    }
+
+    let find_selection = |sel: &str| {
+        if sel.is_empty() {
+            return None;
+        }
+
+        // Find exact match
+        if let Some(selected) = options.iter().find(|&&o| o.to_lowercase() == sel) {
+            return Some(selected);
+        }
+
+        // Find starting abbreviation
+        if let Some(selected) = options.iter().find(|&&o| o.to_lowercase().starts_with(sel)) {
+            return Some(selected);
+        }
+
+        None
+    };
+
+    loop {
+        let mut buf = String::new();
+        print!("> ");
+        io::stdout().flush()?;
+        io::stdin()
+            .read_line(&mut buf)
+            .context("failed to read line from input")?;
+        let selection = {
+            let selection = buf.trim_end_matches(&['\r', '\n']);
+            if selection.is_empty() {
+                default.to_owned()
+            } else {
+                selection.to_lowercase()
+            }
+        };
+
+        if let Some(selected) = find_selection(&selection) {
+            println!();
+
+            return Ok(selected);
+        } else {
+            let options_text = options.join("|");
+            println!("Invalid selection! {selection} is not one of {options_text}");
+        }
+    }
 }
 
 fn init_tracing_subsriber(debug_mode: bool) -> Result<()> {
