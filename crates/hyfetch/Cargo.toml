@@ -25,7 +25,7 @@ shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }
 supports-color = { workspace = true, features = [] }
 tempfile = { workspace = true, features = [] }
-termbg = { workspace = true, features = [] }
+terminal-colorsaurus = { workspace = true, features = [] }
 terminal_size = { workspace = true, features = [] }
 thiserror = { workspace = true, features = [] }
 time = { workspace = true, features = ["local-offset", "std"] }

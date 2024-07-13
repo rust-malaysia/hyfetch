@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::cmp;
 use std::fs::{self, File};
-use std::io::{self, ErrorKind, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -16,6 +16,7 @@ use hyfetch::types::{AnsiMode, Backend, TerminalTheme};
 use hyfetch::utils::get_cache_path;
 use palette::Srgb;
 use strum::{EnumCount, VariantArray, VariantNames};
+use terminal_colorsaurus::{background_color, QueryOptions};
 use terminal_size::terminal_size;
 use time::{Month, OffsetDateTime};
 use tracing::debug;
@@ -166,7 +167,7 @@ fn main() -> Result<()> {
 fn read_config(path: &Path) -> Result<Option<Config>> {
     let mut file = match File::open(path) {
         Ok(file) => file,
-        Err(err) if err.kind() == ErrorKind::NotFound => {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
             return Ok(None);
         },
         Err(err) => {
@@ -201,12 +202,16 @@ fn create_config(
 ) -> Result<Config> {
     // Detect terminal environment (doesn't work for all terminal emulators,
     // especially on Windows)
-    let det_bg = match termbg::rgb(std::time::Duration::from_millis(100)) {
-        Ok(rgb) => Some(Srgb::<u16>::new(rgb.r, rgb.g, rgb.b).into_format::<u8>()),
-        Err(termbg::Error::Unsupported) => None,
-        Err(err) => {
-            return Err(err).context("failed to get background color");
-        },
+    let det_bg = if io::stdout().is_terminal() {
+        match background_color(QueryOptions::default()) {
+            Ok(bg) => Some(Srgb::<u16>::new(bg.r, bg.g, bg.b).into_format::<u8>()),
+            Err(terminal_colorsaurus::Error::UnsupportedTerminal) => None,
+            Err(err) => {
+                return Err(err).context("failed to get terminal background color");
+            },
+        }
+    } else {
+        None
     };
     debug!(?det_bg, "detected background color");
     let det_ansi = supports_color::on(supports_color::Stream::Stdout).map(|color_level| {
