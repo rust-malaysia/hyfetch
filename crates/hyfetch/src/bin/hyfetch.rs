@@ -5,13 +5,14 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use deranged::RangedU8;
 use hyfetch::cli_options::options;
-use hyfetch::color_util::{clear_screen, color, printc, ForegroundBackground, Theme};
+use hyfetch::color_util::{clear_screen, color, printc, ForegroundBackground, Lightness, Theme};
 use hyfetch::models::Config;
 #[cfg(windows)]
 use hyfetch::neofetch_util::ensure_git_bash;
 use hyfetch::neofetch_util::{self, ascii_size, get_distro_ascii, ColorAlignment};
-use hyfetch::presets::{AssignLightness, ColorProfile, Preset};
+use hyfetch::presets::{AssignLightness, Preset};
 use hyfetch::types::{AnsiMode, Backend, TerminalTheme};
 use hyfetch::utils::get_cache_path;
 use palette::Srgb;
@@ -20,6 +21,22 @@ use terminal_colorsaurus::{background_color, QueryOptions};
 use terminal_size::terminal_size;
 use time::{Month, OffsetDateTime};
 use tracing::debug;
+use unicode_segmentation::UnicodeSegmentation;
+
+const TEST_ASCII: &str = r####################"
+### |\___/| ###
+### )     ( ###
+## =\     /= ##
+#### )===( ####
+### /     \ ###
+### |     | ###
+## / {txt} \ ##
+## \       / ##
+_/\_\_   _/_/\_
+|##|  ( (  |##|
+|##|   ) ) |##|
+|##|  (_(  |##|
+"####################;
 
 fn main() -> Result<()> {
     #[cfg(windows)]
@@ -81,7 +98,7 @@ fn main() -> Result<()> {
     let now =
         OffsetDateTime::now_local().context("failed to get current datetime in local timezone")?;
     let cache_path = get_cache_path().context("failed to get cache path")?;
-    let june_path = cache_path.join(format!("animation-displayed-{}", now.year()));
+    let june_path = cache_path.join(format!("animation-displayed-{year}", year = now.year()));
     let show_pride_month = options.june
         || now.month() == Month::June && !june_path.is_file() && io::stdout().is_terminal();
 
@@ -144,7 +161,7 @@ fn main() -> Result<()> {
         config.color_align
     };
     let asc = color_align
-        .recolor_ascii(asc, color_profile, color_mode, theme)
+        .recolor_ascii(asc, &color_profile, color_mode, theme)
         .context("failed to recolor ascii")?;
     neofetch_util::run(asc, backend, args)?;
 
@@ -252,10 +269,7 @@ fn create_config(
         } else {
             format!("{k}:").into()
         };
-        title.push_str({
-            let pad = " ".repeat(30 - k.len());
-            &format!("\n&e{option_counter}. {k}{pad} &~{v}")
-        });
+        title.push_str(&format!("\n&e{option_counter}. {k:<30} &~{v}"));
         *option_counter += 1;
     }
 
@@ -270,9 +284,9 @@ fn create_config(
     // TODO
 
     //////////////////////////////
-    // 1. Select color system
+    // 1. Select color mode
 
-    let select_color_system = || -> Result<(AnsiMode, &str)> {
+    let select_color_mode = || -> Result<(AnsiMode, &str)> {
         if det_ansi == Some(AnsiMode::Rgb) {
             return Ok((AnsiMode::Rgb, "Detected color mode"));
         }
@@ -299,10 +313,10 @@ fn create_config(
     };
 
     let color_mode = {
-        let (color_system, ttl) = select_color_system().context("failed to select color system")?;
-        debug!(?color_system, "selected color mode");
-        update_title(&mut title, &mut option_counter, ttl, color_system.into());
-        color_system
+        let (color_mode, ttl) = select_color_mode().context("failed to select color mode")?;
+        debug!(?color_mode, "selected color mode");
+        update_title(&mut title, &mut option_counter, ttl, color_mode.into());
+        color_mode
     };
 
     //////////////////////////////
@@ -320,10 +334,10 @@ fn create_config(
     };
 
     let theme = {
-        let (selected_theme, ttl) = select_theme().context("failed to select theme")?;
-        debug!(?selected_theme, "selected theme");
-        update_title(&mut title, &mut option_counter, ttl, selected_theme.into());
-        selected_theme
+        let (theme, ttl) = select_theme().context("failed to select theme")?;
+        debug!(?theme, "selected theme");
+        update_title(&mut title, &mut option_counter, ttl, theme.into());
+        theme
     };
 
     //////////////////////////////
@@ -354,12 +368,7 @@ fn create_config(
             .with_context(|| format!("failed to color flag using preset: {preset:?}"))?;
         let name = {
             let name: &'static str = preset.into();
-            let name_len = name.chars().count();
-            let name_len: u8 = name_len.try_into().expect("`name_len` should fit in `u8`");
-            let pad_start = " ".repeat(((spacing - name_len) / 2) as usize);
-            let pad_end =
-                " ".repeat(((spacing - name_len) / 2 + (spacing - name_len) % 2) as usize);
-            format!("{pad_start}{name}{pad_end}")
+            format!("{name:^spacing$}", spacing = spacing as usize)
         };
         flags.push([name, flag.clone(), flag.clone(), flag]);
     }
@@ -422,7 +431,6 @@ fn create_config(
         println!();
     };
 
-    let color_profile: ColorProfile;
     let preset_rainbow = Preset::Rainbow
         .color_profile()
         .with_lightness_adaptive(Config::default_lightness(theme), theme, use_overlay)
@@ -433,6 +441,9 @@ fn create_config(
             false,
         )
         .expect("coloring text with rainbow preset should not fail");
+
+    let preset: Preset;
+    let color_profile;
 
     let mut page: u8 = 0;
     loop {
@@ -447,7 +458,10 @@ fn create_config(
         }
         println!("Enter 'next' to go to the next page and 'prev' to go to the previous page.");
         let selection = literal_input(
-            format!("Which {preset_rainbow} do you want to use? "),
+            format!(
+                "Which {preset} do you want to use? ",
+                preset = preset_rainbow
+            ),
             &opts[..],
             Preset::Rainbow.into(),
             false,
@@ -459,28 +473,23 @@ fn create_config(
         } else if selection == "prev" {
             page -= 1;
         } else {
-            let selected_preset: Preset =
-                selection.parse().expect("selected preset should be valid");
-            debug!(?selected_preset, "selected preset");
-            color_profile = selected_preset.color_profile();
-            {
-                let preset_name: &'static str = selected_preset.into();
-                let preset_colored_name = color_profile
+            preset = selection.parse().expect("selected preset should be valid");
+            debug!(?preset, "selected preset");
+            color_profile = preset.color_profile();
+            update_title(
+                &mut title,
+                &mut option_counter,
+                "Selected flag",
+                &color_profile
                     .with_lightness_adaptive(Config::default_lightness(theme), theme, use_overlay)
                     .color_text(
-                        preset_name,
+                        <&'static str>::from(preset),
                         color_mode,
                         ForegroundBackground::Foreground,
                         false,
                     )
-                    .expect("coloring text with selected preset should not fail");
-                update_title(
-                    &mut title,
-                    &mut option_counter,
-                    "Selected flag",
-                    &preset_colored_name,
-                );
-            }
+                    .expect("coloring text with selected preset should not fail"),
+            );
             break;
         }
     }
@@ -488,7 +497,165 @@ fn create_config(
     //////////////////////////////
     // 4. Dim/lighten colors
 
-    // TODO
+    let test_ascii = &TEST_ASCII[1..(TEST_ASCII.len() - 1)];
+    let Some(test_ascii_width) = test_ascii
+        .split('\n')
+        .map(|line| line.graphemes(true).count())
+        .max()
+    else {
+        unreachable!();
+    };
+    let test_ascii_width: u8 = test_ascii_width
+        .try_into()
+        .expect("`test_ascii_width` should fit in `u8`");
+    let test_ascii_height = test_ascii.split('\n').count();
+    let test_ascii_height: u8 = test_ascii_height
+        .try_into()
+        .expect("`test_ascii_height` should fit in `u8`");
+
+    let select_lightness = || -> Result<Lightness> {
+        clear_screen(Some(&title), color_mode, debug_mode)
+            .expect("title should not contain invalid color codes");
+        print_title_prompt(
+            option_counter,
+            "Let's adjust the color brightness!",
+            color_mode,
+        );
+        printc(
+            format!(
+                "The colors might be a little bit too {bright_dark} for {light_dark} mode.",
+                bright_dark = match theme {
+                    TerminalTheme::Light => "bright",
+                    TerminalTheme::Dark => "dark",
+                },
+                light_dark = <&'static str>::from(theme)
+            ),
+            color_mode,
+        )
+        .expect("message should not contain invalid color codes");
+        println!();
+
+        // Print cats
+        {
+            let (term_w, _) = terminal_size().context("failed to get terminal size")?;
+            let num_cols = cmp::max(1, term_w.0 / (test_ascii_width as u16 + 2));
+            let num_cols: u8 = num_cols.try_into().expect("`num_cols` should fit in `u8`");
+            const MIN: f32 = 0.15;
+            const MAX: f32 = 0.85;
+            let ratios =
+                (0..num_cols)
+                    .map(|col| col as f32 / num_cols as f32)
+                    .map(|r| match theme {
+                        TerminalTheme::Light => r * (MAX - MIN) / 2.0 + MIN,
+                        TerminalTheme::Dark => (r * (MAX - MIN) + (MAX + MIN)) / 2.0,
+                    });
+            let row: Vec<Vec<String>> = ratios
+                .map(|r| {
+                    let color_align = ColorAlignment::Horizontal { fore_back: None };
+                    let asc = color_align
+                        .recolor_ascii(
+                            test_ascii.replace(
+                                "{txt}",
+                                &format!(
+                                    "{lightness:^5}",
+                                    lightness = format!("{lightness:.0}%", lightness = r * 100.0)
+                                ),
+                            ),
+                            &color_profile.with_lightness_adaptive(
+                                Lightness::new(r)
+                                    .expect("generated lightness should not be invalid"),
+                                theme,
+                                use_overlay,
+                            ),
+                            color_mode,
+                            theme,
+                        )
+                        .expect("recoloring test ascii should not fail");
+                    asc.split('\n').map(ToOwned::to_owned).collect::<Vec<_>>()
+                })
+                .collect();
+            for i in 0..(test_ascii_height as usize) {
+                let mut line = String::new();
+                for lines in &row {
+                    line.push_str(&lines[i]);
+                    line.push_str("  ");
+                }
+                printc(line, color_mode)
+                    .expect("test ascii line should not contain invalid color codes");
+            }
+        }
+
+        let default_lightness = Config::default_lightness(theme);
+
+        let parse_lightness = |lightness: String| -> Result<Lightness> {
+            if lightness.is_empty() || ["unset", "none"].contains(&&*lightness) {
+                return Ok(default_lightness);
+            }
+
+            let lightness = if let Some(lightness) = lightness.strip_suffix('%') {
+                let lightness: RangedU8<0, 100> = lightness.parse()?;
+                lightness.get() as f32 / 100.0
+            } else {
+                match lightness.parse::<RangedU8<0, 100>>() {
+                    Ok(lightness) => lightness.get() as f32 / 100.0,
+                    Err(_) => lightness.parse::<f32>()?,
+                }
+            };
+
+            Ok(Lightness::new(lightness)?)
+        };
+
+        loop {
+            println!();
+            printc(
+                format!(
+                    "Which brightness level looks the best? (Default: {default:.0}% for \
+                     {light_dark} mode)",
+                    default = f32::from(default_lightness) * 100.0,
+                    light_dark = <&'static str>::from(theme)
+                ),
+                color_mode,
+            )
+            .expect("prompt should not contain invalid color codes");
+            let lightness = {
+                let mut buf = String::new();
+                print!("> ");
+                io::stdout().flush()?;
+                io::stdin()
+                    .read_line(&mut buf)
+                    .context("failed to read line from input")?;
+                buf.trim().to_lowercase()
+            };
+
+            match parse_lightness(lightness) {
+                Ok(lightness) => {
+                    return Ok(lightness);
+                },
+                Err(err) => {
+                    debug!(%err, "could not parse lightness");
+                    printc(
+                        "&cUnable to parse lightness value, please enter a lightness value such \
+                         as 45%, .45, or 45",
+                        color_mode,
+                    )
+                    .expect("message should not contain invalid color codes");
+                },
+            }
+        }
+    };
+
+    let lightness = select_lightness().context("failed to select lightness")?;
+    debug!(?lightness, "selected lightness");
+    let color_profile = color_profile.with_lightness_adaptive(lightness, theme, use_overlay);
+    update_title(
+        &mut title,
+        &mut option_counter,
+        "Selected brightness",
+        &format!("{lightness:.2}", lightness = f32::from(lightness)),
+    );
+
+    //////////////////////////////
+    // 5. Color arrangement
 
     todo!()
 }

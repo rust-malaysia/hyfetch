@@ -66,9 +66,9 @@ pub struct Lightness(f32);
 #[derive(Debug, Error)]
 pub enum LightnessError {
     #[error(
-        "invalid lightness {0}, expected value between {} and {}",
-        Lightness::MIN,
-        Lightness::MAX
+        "invalid lightness {0}, expected value between {min} and {max}",
+        min = Lightness::MIN,
+        max = Lightness::MAX
     )]
     OutOfRange(f32),
 }
@@ -346,8 +346,8 @@ where
     let msg = msg.as_ref();
 
     println!(
-        "{}",
-        color(format!("{msg}&r"), mode).context("failed to color message")?
+        "{msg}",
+        msg = color(format!("{msg}&r"), mode).context("failed to color message")?
     );
 
     Ok(())
