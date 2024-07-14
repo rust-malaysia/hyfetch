@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
 #[cfg(windows)]
 use normpath::PathExt as _;
+use same_file::is_same_file;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use tracing::debug;
@@ -317,7 +318,7 @@ pub fn neofetch_path() -> Result<Option<PathBuf>> {
     let neowofetch_path = if neowofetch_path.is_some() {
         neowofetch_path
     } else {
-        let current_exe_path = env::current_exe()
+        let current_exe_path: PathBuf = env::current_exe()
             .and_then(|p| {
                 #[cfg(not(windows))]
                 {
@@ -358,10 +359,13 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
                 // See https://github.com/hykilpikonna/hyfetch/issues/233
                 let windir = env::var_os("windir")
                     .context("`windir` environment variable is not set or invalid")?;
-                if bash_path == Path::new(&windir).join(r"System32\bash.exe") {
-                    None
-                } else {
-                    Some(bash_path)
+                match is_same_file(&bash_path, Path::new(&windir).join(r"System32\bash.exe")) {
+                    Ok(true) => None,
+                    Ok(false) => Some(bash_path),
+                    Err(err) if err.kind() == ErrorKind::NotFound => Some(bash_path),
+                    Err(err) => {
+                        return Err(err).context("failed to check if paths refer to the same file");
+                    },
                 }
             },
             _ => bash_path,
@@ -417,7 +421,7 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
     let git_bash_path = if git_bash_path.is_some() {
         git_bash_path
     } else {
-        let current_exe_path = env::current_exe()
+        let current_exe_path: PathBuf = env::current_exe()
             .and_then(|p| p.normalize().map(|p| p.into()))
             .context("failed to get path of current running executable")?;
         let bash_path = current_exe_path
@@ -738,7 +742,7 @@ fn fastfetch_path() -> Result<Option<PathBuf>> {
     };
 
     // Fall back to `fastfetch` in directory of current executable
-    let current_exe_path = env::current_exe()
+    let current_exe_path: PathBuf = env::current_exe()
         .and_then(|p| {
             #[cfg(not(windows))]
             {
