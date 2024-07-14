@@ -41,7 +41,7 @@ _/\_\_   _/_/\_
 fn main() -> Result<()> {
     #[cfg(windows)]
     if let Err(err) = enable_ansi_support::enable_ansi_support() {
-        debug!(err, "could not enable ANSI escape code support");
+        debug!(%err, "could not enable ANSI escape code support");
     }
 
     let options = options().run();
