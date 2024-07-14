@@ -494,7 +494,7 @@ impl ColorProfile {
         let mut weighted_colors = vec![];
 
         for (i, w) in weights.into_iter().enumerate() {
-            weighted_colors.extend(iter::repeat(self.colors[i]).take(w as usize));
+            weighted_colors.extend(iter::repeat(self.colors[i]).take(usize::from(w)));
         }
 
         Ok(Self::new(weighted_colors))
@@ -509,12 +509,11 @@ impl ColorProfile {
         // if length < orig_len {
         //     unimplemented!("compressing length of color profile not implemented");
         // }
-        let center_i = (orig_len as f32 / 2.0).floor() as usize;
+        let center_i = usize::from(orig_len / 2);
 
         // How many copies of each color should be displayed at least?
-        let repeats = (length as f32 / orig_len as f32).floor() as usize;
-        let repeats: u8 = repeats.try_into().expect("`repeats` should fit in `u8`");
-        let mut weights = vec![repeats; orig_len as usize];
+        let repeats = length / orig_len;
+        let mut weights = vec![repeats; usize::from(orig_len)];
 
         // How many extra spaces left?
         let mut extras = length % orig_len;
@@ -528,7 +527,7 @@ impl ColorProfile {
         // Add weight to border until there's no space left (extras must be even at this
         // point)
         let weights_len = weights.len();
-        for border_i in 0..(extras / 2) as usize {
+        for border_i in 0..usize::from(extras / 2) {
             weights[border_i] += 1;
             weights[weights_len - border_i - 1] += 1;
         }

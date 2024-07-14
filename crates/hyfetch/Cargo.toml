@@ -16,7 +16,9 @@ anyhow = { workspace = true, features = ["std"] }
 bpaf = { workspace = true, features = [] }
 deranged = { workspace = true, features = ["serde", "std"] }
 directories = { workspace = true, features = [] }
+fastrand = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, features = ["serde", "std"] }
+itertools = { workspace = true, features = ["use_std"] }
 palette = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }

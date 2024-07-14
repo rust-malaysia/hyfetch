@@ -1,3 +1,4 @@
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,37 @@ pub fn get_cache_path() -> Result<PathBuf> {
         .cache_dir()
         .to_owned();
     Ok(path)
+}
+
+/// Reads a string from standard input. The trailing newline is stripped.
+///
+/// The prompt string, if given, is printed to standard output without a
+/// trailing newline before reading input.
+pub fn input<S>(prompt: Option<S>) -> Result<String>
+where
+    S: AsRef<str>,
+{
+    if let Some(prompt) = prompt {
+        print!("{prompt}", prompt = prompt.as_ref());
+        io::stdout().flush()?;
+    }
+
+    let mut buf = String::new();
+    io::stdin()
+        .read_line(&mut buf)
+        .context("failed to read line from standard input")?;
+    let buf = {
+        #[cfg(not(windows))]
+        {
+            buf.strip_suffix('\n').unwrap_or(&buf)
+        }
+        #[cfg(windows)]
+        {
+            buf.strip_suffix("\r\n").unwrap_or(&buf)
+        }
+    };
+
+    Ok(buf.to_owned())
 }
 
 /// Finds a command in `PATH`.
