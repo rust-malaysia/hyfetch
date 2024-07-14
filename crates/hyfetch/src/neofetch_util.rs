@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::io::{ErrorKind, Write};
+#[cfg(windows)]
+use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -11,6 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
 #[cfg(windows)]
 use normpath::PathExt as _;
+#[cfg(windows)]
 use same_file::is_same_file;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -362,7 +365,7 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
                 match is_same_file(&bash_path, Path::new(&windir).join(r"System32\bash.exe")) {
                     Ok(true) => None,
                     Ok(false) => Some(bash_path),
-                    Err(err) if err.kind() == ErrorKind::NotFound => Some(bash_path),
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => Some(bash_path),
                     Err(err) => {
                         return Err(err).context("failed to check if paths refer to the same file");
                     },
