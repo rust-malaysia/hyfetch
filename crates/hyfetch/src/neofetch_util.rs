@@ -28,8 +28,9 @@ use crate::presets::ColorProfile;
 use crate::types::{AnsiMode, Backend, TerminalTheme};
 use crate::utils::{find_file, find_in_path, process_command_status};
 
-const NEOFETCH_COLOR_PATTERNS: [&str; 6] = ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
-static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
+pub const NEOFETCH_COLOR_PATTERNS: [&str; 6] =
+    ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
+pub static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
 
 type ForeBackColorPair = (NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor);
 
@@ -241,7 +242,7 @@ impl ColorAlignment {
                     for (&ai, &pi) in custom_colors {
                         let ai: u8 = ai.into();
                         let pi: u8 = pi.into();
-                        replacements[ai as usize - 1] = colors[pi as usize]
+                        replacements[usize::from(ai - 1)] = colors[usize::from(pi)]
                             .to_ansi_string(color_mode, ForegroundBackground::Foreground)
                             .into();
                     }
@@ -545,7 +546,7 @@ where
     for line in asc.split('\n') {
         let (line_w, _) = ascii_size(line);
         buf.push_str(line);
-        let pad = " ".repeat((w - line_w) as usize);
+        let pad = " ".repeat(usize::from(w - line_w));
         buf.push_str(&pad);
         buf.push('\n');
     }

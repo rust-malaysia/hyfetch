@@ -1,20 +1,28 @@
 use std::borrow::Cow;
 use std::cmp;
 use std::fs::{self, File};
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 
+use aho_corasick::AhoCorasick;
 use anyhow::{Context, Result};
 use deranged::RangedU8;
 use hyfetch::cli_options::options;
-use hyfetch::color_util::{clear_screen, color, printc, ForegroundBackground, Lightness, Theme};
+use hyfetch::color_util::{
+    clear_screen, color, printc, ForegroundBackground, Lightness, NeofetchAsciiIndexedColor,
+    PresetIndexedColor, Theme,
+};
 use hyfetch::models::Config;
 #[cfg(windows)]
 use hyfetch::neofetch_util::ensure_git_bash;
-use hyfetch::neofetch_util::{self, ascii_size, get_distro_ascii, ColorAlignment};
+use hyfetch::neofetch_util::{
+    self, ascii_size, get_distro_ascii, ColorAlignment, NEOFETCH_COLORS_AC, NEOFETCH_COLOR_PATTERNS,
+};
 use hyfetch::presets::{AssignLightness, Preset};
 use hyfetch::types::{AnsiMode, Backend, TerminalTheme};
-use hyfetch::utils::get_cache_path;
+use hyfetch::utils::{get_cache_path, input};
+use indexmap::{IndexMap, IndexSet};
+use itertools::Itertools;
 use palette::Srgb;
 use strum::{EnumCount, VariantArray, VariantNames};
 use terminal_colorsaurus::{background_color, QueryOptions};
@@ -166,12 +174,7 @@ fn main() -> Result<()> {
     neofetch_util::run(asc, backend, args)?;
 
     if options.ask_exit {
-        print!("Press any key to exit...");
-        io::stdout().flush()?;
-        let mut buf = String::new();
-        io::stdin()
-            .read_line(&mut buf)
-            .context("failed to read line from input")?;
+        input(Some("Press any key to exit...")).context("failed to read input")?;
     }
 
     Ok(())
@@ -246,7 +249,7 @@ fn create_config(
 
     let (asc, fore_back) =
         get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
-    let (asc_width, asc_lines) = ascii_size(asc);
+    let (asc_width, asc_lines) = ascii_size(&asc);
     let theme = det_bg.map(|bg| bg.theme()).unwrap_or(TerminalTheme::Light);
     let color_mode = det_ansi.unwrap_or(AnsiMode::Ansi256);
     let logo = color(
@@ -294,6 +297,8 @@ fn create_config(
         clear_screen(Some(&title), color_mode, debug_mode)
             .expect("title should not contain invalid color codes");
 
+        let (term_w, _) = terminal_size().context("failed to get terminal size")?;
+
         // TODO
 
         println!();
@@ -330,7 +335,23 @@ fn create_config(
         clear_screen(Some(&title), color_mode, debug_mode)
             .expect("title should not contain invalid color codes");
 
-        todo!()
+        print_title_prompt(
+            option_counter,
+            "Is your terminal in &blight mode&~ or &4dark mode&~?",
+            color_mode,
+        );
+        let opts = [TerminalTheme::Light, TerminalTheme::Dark].map(<&'static str>::from);
+        let choice = literal_input(
+            "",
+            &opts[..],
+            <&'static str>::from(TerminalTheme::Dark),
+            true,
+            color_mode,
+        )?;
+        Ok((
+            choice.parse().expect("selected theme should be valid"),
+            "Selected background color",
+        ))
     };
 
     let theme = {
@@ -360,7 +381,7 @@ fn create_config(
         let color_profile = preset.color_profile();
         let flag = color_profile
             .color_text(
-                " ".repeat(spacing as usize),
+                " ".repeat(usize::from(spacing)),
                 color_mode,
                 ForegroundBackground::Background,
                 false,
@@ -368,7 +389,7 @@ fn create_config(
             .with_context(|| format!("failed to color flag using preset: {preset:?}"))?;
         let name = {
             let name: &'static str = preset.into();
-            format!("{name:^spacing$}", spacing = spacing as usize)
+            format!("{name:^spacing$}", spacing = usize::from(spacing))
         };
         flags.push([name, flag.clone(), flag.clone(), flag]);
     }
@@ -376,43 +397,31 @@ fn create_config(
     // Calculate flags per row
     let (flags_per_row, rows_per_page) = {
         let (term_w, term_h) = terminal_size().context("failed to get terminal size")?;
-        let flags_per_row = term_w.0 / (spacing as u16 + 2);
+        let flags_per_row = term_w.0 / (u16::from(spacing) + 2);
         let flags_per_row: u8 = flags_per_row
             .try_into()
             .expect("`flags_per_row` should fit in `u8`");
-        let rows_per_page = ((term_h.0 - 13) as f32 / 5.0).floor() as usize;
+        let rows_per_page = cmp::max(1, (term_h.0 - 13) / 5);
         let rows_per_page: u8 = rows_per_page
             .try_into()
             .expect("`rows_per_page` should fit in `u8`");
-        let rows_per_page = cmp::max(1, rows_per_page);
         (flags_per_row, rows_per_page)
     };
-    let num_pages = (Preset::COUNT as f32 / (flags_per_row * rows_per_page) as f32).ceil() as usize;
+    let num_pages =
+        (Preset::COUNT as f32 / (flags_per_row as f32 * rows_per_page as f32)).ceil() as usize;
     let num_pages: u8 = num_pages
         .try_into()
         .expect("`num_pages` should fit in `u8`");
 
     // Create pages
-    let mut pages = Vec::with_capacity(num_pages as usize);
-    for flags in flags.chunks((flags_per_row * rows_per_page) as usize) {
-        let mut page = Vec::with_capacity(rows_per_page as usize);
-        for flags in flags.chunks(flags_per_row as usize) {
+    let mut pages = Vec::with_capacity(usize::from(num_pages));
+    for flags in flags.chunks(usize::from(flags_per_row) * usize::from(rows_per_page)) {
+        let mut page = Vec::with_capacity(usize::from(rows_per_page));
+        for flags in flags.chunks(usize::from(flags_per_row)) {
             page.push(flags);
         }
         pages.push(page);
     }
-
-    let print_flag_row = |row: &[[String; 4]]| {
-        for i in 0..4 {
-            let mut line = String::new();
-            for flag in row {
-                line.push_str(&flag[i]);
-                line.push_str("  ");
-            }
-            printc(line, color_mode).expect("flag line should not contain invalid color codes");
-        }
-        println!();
-    };
 
     let print_flag_page = |page, page_num| {
         clear_screen(Some(&title), color_mode, debug_mode)
@@ -426,10 +435,22 @@ fn create_config(
         }
         println!();
         for &row in page {
-            print_flag_row(row);
+            print_flag_row(row, color_mode);
         }
         println!();
     };
+
+    fn print_flag_row(row: &[[String; 4]], color_mode: AnsiMode) {
+        for i in 0..4 {
+            let mut line = String::new();
+            for flag in row {
+                line.push_str(&flag[i]);
+                line.push_str("  ");
+            }
+            printc(line, color_mode).expect("flag line should not contain invalid color codes");
+        }
+        println!();
+    }
 
     let preset_rainbow = Preset::Rainbow
         .color_profile()
@@ -447,7 +468,7 @@ fn create_config(
 
     let mut page: u8 = 0;
     loop {
-        print_flag_page(&pages[page as usize], page);
+        print_flag_page(&pages[usize::from(page)], page);
 
         let mut opts = Vec::from(<Preset as VariantNames>::VARIANTS);
         if page < num_pages - 1 {
@@ -497,7 +518,7 @@ fn create_config(
     //////////////////////////////
     // 4. Dim/lighten colors
 
-    let test_ascii = &TEST_ASCII[1..(TEST_ASCII.len() - 1)];
+    let test_ascii = &TEST_ASCII[1..TEST_ASCII.len() - 1];
     let Some(test_ascii_width) = test_ascii
         .split('\n')
         .map(|line| line.graphemes(true).count())
@@ -535,10 +556,12 @@ fn create_config(
         .expect("message should not contain invalid color codes");
         println!();
 
+        let color_align = ColorAlignment::Horizontal { fore_back: None };
+
         // Print cats
         {
             let (term_w, _) = terminal_size().context("failed to get terminal size")?;
-            let num_cols = cmp::max(1, term_w.0 / (test_ascii_width as u16 + 2));
+            let num_cols = cmp::max(1, term_w.0 / (u16::from(test_ascii_width) + 2));
             let num_cols: u8 = num_cols.try_into().expect("`num_cols` should fit in `u8`");
             const MIN: f32 = 0.15;
             const MAX: f32 = 0.85;
@@ -551,7 +574,6 @@ fn create_config(
                     });
             let row: Vec<Vec<String>> = ratios
                 .map(|r| {
-                    let color_align = ColorAlignment::Horizontal { fore_back: None };
                     let asc = color_align
                         .recolor_ascii(
                             test_ascii.replace(
@@ -571,10 +593,10 @@ fn create_config(
                             theme,
                         )
                         .expect("recoloring test ascii should not fail");
-                    asc.split('\n').map(ToOwned::to_owned).collect::<Vec<_>>()
+                    asc.split('\n').map(ToOwned::to_owned).collect()
                 })
                 .collect();
-            for i in 0..(test_ascii_height as usize) {
+            for i in 0..usize::from(test_ascii_height) {
                 let mut line = String::new();
                 for lines in &row {
                     line.push_str(&lines[i]);
@@ -586,24 +608,6 @@ fn create_config(
         }
 
         let default_lightness = Config::default_lightness(theme);
-
-        let parse_lightness = |lightness: String| -> Result<Lightness> {
-            if lightness.is_empty() || ["unset", "none"].contains(&&*lightness) {
-                return Ok(default_lightness);
-            }
-
-            let lightness = if let Some(lightness) = lightness.strip_suffix('%') {
-                let lightness: RangedU8<0, 100> = lightness.parse()?;
-                lightness.get() as f32 / 100.0
-            } else {
-                match lightness.parse::<RangedU8<0, 100>>() {
-                    Ok(lightness) => lightness.get() as f32 / 100.0,
-                    Err(_) => lightness.parse::<f32>()?,
-                }
-            };
-
-            Ok(Lightness::new(lightness)?)
-        };
 
         loop {
             println!();
@@ -617,17 +621,12 @@ fn create_config(
                 color_mode,
             )
             .expect("prompt should not contain invalid color codes");
-            let lightness = {
-                let mut buf = String::new();
-                print!("> ");
-                io::stdout().flush()?;
-                io::stdin()
-                    .read_line(&mut buf)
-                    .context("failed to read line from input")?;
-                buf.trim().to_lowercase()
-            };
+            let lightness = input(Some("> "))
+                .context("failed to read input")?
+                .trim()
+                .to_lowercase();
 
-            match parse_lightness(lightness) {
+            match parse_lightness(lightness, default_lightness) {
                 Ok(lightness) => {
                     return Ok(lightness);
                 },
@@ -644,6 +643,24 @@ fn create_config(
         }
     };
 
+    fn parse_lightness(lightness: String, default: Lightness) -> Result<Lightness> {
+        if lightness.is_empty() || ["unset", "none"].contains(&&*lightness) {
+            return Ok(default);
+        }
+
+        let lightness = if let Some(lightness) = lightness.strip_suffix('%') {
+            let lightness: RangedU8<0, 100> = lightness.parse()?;
+            lightness.get() as f32 / 100.0
+        } else {
+            match lightness.parse::<RangedU8<0, 100>>() {
+                Ok(lightness) => lightness.get() as f32 / 100.0,
+                Err(_) => lightness.parse::<f32>()?,
+            }
+        };
+
+        Ok(Lightness::new(lightness)?)
+    }
+
     let lightness = select_lightness().context("failed to select lightness")?;
     debug!(?lightness, "selected lightness");
     let color_profile = color_profile.with_lightness_adaptive(lightness, theme, use_overlay);
@@ -657,26 +674,215 @@ fn create_config(
     //////////////////////////////
     // 5. Color arrangement
 
+    let color_align: ColorAlignment;
+
+    // Calculate amount of row/column that can be displayed on screen
+    let (ascii_per_row, ascii_rows) = {
+        let (term_w, term_h) = terminal_size().context("failed to get terminal size")?;
+        let ascii_per_row = cmp::max(1, term_w.0 / (u16::from(asc_width) + 2));
+        let ascii_per_row: u8 = ascii_per_row
+            .try_into()
+            .expect("`ascii_per_row` should fit in `u8`");
+        let ascii_rows = cmp::max(1, (term_h.0 - 8) / u16::from(asc_lines));
+        let ascii_rows: u8 = ascii_rows
+            .try_into()
+            .expect("`ascii_rows` should fit in `u8`");
+        (ascii_per_row, ascii_rows)
+    };
+
+    // Displays horizontal and vertical arrangements in the first iteration, but
+    // hide them in later iterations
+    let hv_arrangements = [
+        (
+            "Horizontal",
+            ColorAlignment::Horizontal { fore_back: None }
+                .with_fore_back(fore_back)
+                .expect("horizontal color alignment should not be invalid"),
+        ),
+        (
+            "Vertical",
+            ColorAlignment::Vertical { fore_back: None }
+                .with_fore_back(fore_back)
+                .expect("vertical color alignment should not be invalid"),
+        ),
+    ];
+    let mut arrangements: IndexMap<Cow<str>, ColorAlignment> =
+        hv_arrangements.map(|(k, ca)| (k.into(), ca)).into();
+
+    // Loop for random rolling
+    let mut rng = fastrand::Rng::new();
+    loop {
+        clear_screen(Some(&title), color_mode, debug_mode)
+            .expect("title should not contain invalid color codes");
+
+        // Random color schemes
+        let mut preset_indices: Vec<PresetIndexedColor> =
+            (0..color_profile.unique_colors().colors.len())
+                .map(|pi| {
+                    let pi: u8 = pi.try_into().expect("`pi` should fit in `u8`");
+                    pi.into()
+                })
+                .collect();
+        let slots: IndexSet<NeofetchAsciiIndexedColor> = {
+            let ac = NEOFETCH_COLORS_AC
+                .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+            ac.find_iter(&asc)
+                .map(|m| {
+                    asc[m.start() + 3..m.end() - 1]
+                        .parse()
+                        .expect("neofetch ascii color index should not be invalid")
+                })
+                .collect()
+        };
+        while preset_indices.len() < slots.len() {
+            preset_indices.extend_from_within(0..);
+        }
+        let preset_index_permutations: IndexSet<Vec<PresetIndexedColor>> = preset_indices
+            .into_iter()
+            .permutations(slots.len())
+            .collect();
+        let random_count = cmp::max(
+            0,
+            usize::from(ascii_per_row) * usize::from(ascii_rows) - arrangements.len(),
+        );
+        let random_count: u8 = random_count
+            .try_into()
+            .expect("`random_count` should fit in `u8`");
+        let choices: IndexSet<Vec<PresetIndexedColor>> =
+            if usize::from(random_count) > preset_index_permutations.len() {
+                preset_index_permutations
+            } else {
+                rng.choose_multiple(
+                    preset_index_permutations.into_iter(),
+                    usize::from(random_count),
+                )
+                .into_iter()
+                .collect()
+            };
+        let choices: Vec<IndexMap<NeofetchAsciiIndexedColor, PresetIndexedColor>> = choices
+            .into_iter()
+            .map(|c| {
+                c.into_iter()
+                    .enumerate()
+                    .map(|(ai, pi)| (slots[ai], pi))
+                    .collect()
+            })
+            .collect();
+        arrangements.extend(choices.into_iter().enumerate().map(|(i, r)| {
+            (format!("random{i}").into(), ColorAlignment::Custom {
+                colors: r,
+            })
+        }));
+        let asciis = arrangements.iter().map(|(k, ca)| {
+            let mut v: Vec<String> = ca
+                .recolor_ascii(&asc, &color_profile, color_mode, theme)
+                .expect("recoloring ascii should not fail")
+                .split('\n')
+                .map(ToOwned::to_owned)
+                .collect();
+            v.push(format!(
+                "{k:^asc_width$}",
+                asc_width = usize::from(asc_width)
+            ));
+            v
+        });
+
+        for row in &asciis.chunks(usize::from(ascii_per_row)) {
+            let row: Vec<Vec<String>> = row.into_iter().collect();
+
+            // Print by row
+            for i in 0..usize::from(asc_lines) + 1 {
+                let mut line = String::new();
+                for lines in &row {
+                    line.push_str(&lines[i]);
+                    line.push_str("  ");
+                }
+                printc(line, color_mode)
+                    .expect("ascii line should not contain invalid color codes");
+            }
+
+            println!();
+        }
+
+        print_title_prompt(
+            option_counter,
+            "Let's choose a color arrangement!",
+            color_mode,
+        );
+        printc(
+            "You can choose standard horizontal or vertical alignment, or use one of the random \
+             color schemes.",
+            color_mode,
+        )
+        .expect("message should not contain invalid color codes");
+        println!(r#"You can type "roll" to randomize again."#);
+        println!();
+        let mut opts: Vec<Cow<str>> = ["horizontal", "vertical", "roll"].map(Into::into).into();
+        opts.extend((0..random_count).map(|i| format!("random{i}").into()));
+        let choice = literal_input("Your choice?", &opts[..], "horizontal", true, color_mode)
+            .context("failed to select color alignment")?;
+
+        if choice == "roll" {
+            arrangements.clear();
+            continue;
+        }
+
+        // Save choice
+        color_align = arrangements
+            .into_iter()
+            .find_map(|(k, ca)| {
+                if k.to_lowercase() == choice {
+                    Some(ca)
+                } else {
+                    None
+                }
+            })
+            .expect("selected color alignment should be valid");
+        break;
+    }
+
+    update_title(
+        &mut title,
+        &mut option_counter,
+        "Color alignment",
+        &format!("{color_align:?}"),
+    );
+
+    //////////////////////////////
+    // 6. Select *fetch backend
+
+    let select_backend = || {
+        clear_screen(Some(&title), color_mode, debug_mode)
+            .expect("title should not contain invalid color codes");
+
+        todo!()
+    };
+
+    let backend = select_backend();
+
     todo!()
 }
 
 /// Asks the user to provide an input among a list of options.
-fn literal_input<'a, S>(
-    prompt: S,
-    options: &[&'a str],
+fn literal_input<'a, S1, S2>(
+    prompt: S1,
+    options: &'a [S2],
     default: &str,
     show_options: bool,
     color_mode: AnsiMode,
 ) -> Result<&'a str>
 where
-    S: AsRef<str>,
+    S1: AsRef<str>,
+    S2: AsRef<str>,
 {
     let prompt = prompt.as_ref();
 
     if show_options {
         let options_text = options
             .iter()
-            .map(|&o| {
+            .map(|o| {
+                let o = o.as_ref();
+
                 if o == default {
                     format!("&l&n{o}&L&N")
                 } else {
@@ -692,48 +898,46 @@ where
             .context("failed to print input prompt")?;
     }
 
-    let find_selection = |sel: &str| {
+    loop {
+        let selection = input(Some("> ")).context("failed to read input")?;
+        let selection = if selection.is_empty() {
+            default.to_owned()
+        } else {
+            selection.to_lowercase()
+        };
+
+        if let Some(selected) = find_selection(&selection, options) {
+            println!();
+
+            return Ok(selected);
+        } else {
+            let options_text = options.iter().map(AsRef::as_ref).join("|");
+            println!("Invalid selection! {selection} is not one of {options_text}");
+        }
+    }
+
+    fn find_selection<'a, S>(sel: &str, options: &'a [S]) -> Option<&'a str>
+    where
+        S: AsRef<str>,
+    {
         if sel.is_empty() {
             return None;
         }
 
         // Find exact match
-        if let Some(selected) = options.iter().find(|&&o| o.to_lowercase() == sel) {
-            return Some(selected);
+        if let Some(selected) = options.iter().find(|&o| o.as_ref().to_lowercase() == sel) {
+            return Some(selected.as_ref());
         }
 
         // Find starting abbreviation
-        if let Some(selected) = options.iter().find(|&&o| o.to_lowercase().starts_with(sel)) {
-            return Some(selected);
+        if let Some(selected) = options
+            .iter()
+            .find(|&o| o.as_ref().to_lowercase().starts_with(sel))
+        {
+            return Some(selected.as_ref());
         }
 
         None
-    };
-
-    loop {
-        let mut buf = String::new();
-        print!("> ");
-        io::stdout().flush()?;
-        io::stdin()
-            .read_line(&mut buf)
-            .context("failed to read line from input")?;
-        let selection = {
-            let selection = buf.trim_end_matches(&['\r', '\n']);
-            if selection.is_empty() {
-                default.to_owned()
-            } else {
-                selection.to_lowercase()
-            }
-        };
-
-        if let Some(selected) = find_selection(&selection) {
-            println!();
-
-            return Ok(selected);
-        } else {
-            let options_text = options.join("|");
-            println!("Invalid selection! {selection} is not one of {options_text}");
-        }
     }
 }
 
