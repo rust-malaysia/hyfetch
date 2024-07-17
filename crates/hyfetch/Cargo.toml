@@ -16,6 +16,7 @@ anyhow = { workspace = true, features = ["std"] }
 bpaf = { workspace = true, features = [] }
 deranged = { workspace = true, features = ["serde", "std"] }
 directories = { workspace = true, features = [] }
+enterpolation = { workspace = true, features = ["bspline", "std"] }
 fastrand = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, features = ["serde", "std"] }
 itertools = { workspace = true, features = ["use_std"] }

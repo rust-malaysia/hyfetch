@@ -16,6 +16,7 @@ use normpath::PathExt as _;
 #[cfg(windows)]
 use same_file::is_same_file;
 use serde::{Deserialize, Serialize};
+use strum::IntoStaticStr;
 use tempfile::NamedTempFile;
 use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation;
@@ -34,9 +35,10 @@ pub static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
 
 type ForeBackColorPair = (NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor);
 
-#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
+#[derive(Clone, Eq, PartialEq, Debug, Deserialize, IntoStaticStr, Serialize)]
 #[serde(tag = "mode")]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum ColorAlignment {
     Horizontal {
         #[serde(skip)]
@@ -519,13 +521,11 @@ where
         ac.replace_all(asc, &REPLACEMENTS)
     };
 
-    let Some(width) = asc
+    let width = asc
         .split('\n')
         .map(|line| line.graphemes(true).count())
         .max()
-    else {
-        unreachable!();
-    };
+        .expect("line iterator should not be empty");
     let width: u8 = width.try_into().expect("`width` should fit in `u8`");
     let height = asc.split('\n').count();
     let height: u8 = height.try_into().expect("`height` should fit in `u8`");
