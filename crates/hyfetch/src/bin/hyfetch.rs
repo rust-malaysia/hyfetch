@@ -1,16 +1,20 @@
 use std::borrow::Cow;
 use std::cmp;
+use std::fmt::Write;
 use std::fs::{self, File};
 use std::io::{self, IsTerminal, Read};
+use std::iter::zip;
 use std::path::Path;
 
 use aho_corasick::AhoCorasick;
 use anyhow::{Context, Result};
 use deranged::RangedU8;
+use enterpolation::bspline::BSpline;
+use enterpolation::{Curve, Generator};
 use hyfetch::cli_options::options;
 use hyfetch::color_util::{
     clear_screen, color, printc, ForegroundBackground, Lightness, NeofetchAsciiIndexedColor,
-    PresetIndexedColor, Theme,
+    PresetIndexedColor, Theme, ToAnsiString,
 };
 use hyfetch::models::Config;
 #[cfg(windows)]
@@ -26,7 +30,7 @@ use itertools::Itertools;
 use palette::Srgb;
 use strum::{EnumCount, VariantArray, VariantNames};
 use terminal_colorsaurus::{background_color, QueryOptions};
-use terminal_size::terminal_size;
+use terminal_size::{terminal_size, Height, Width};
 use time::{Month, OffsetDateTime};
 use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation;
@@ -174,7 +178,7 @@ fn main() -> Result<()> {
     neofetch_util::run(asc, backend, args)?;
 
     if options.ask_exit {
-        input(Some("Press any key to exit...")).context("failed to read input")?;
+        input(Some("Press enter to exit...")).context("failed to read input")?;
     }
 
     Ok(())
@@ -284,7 +288,23 @@ fn create_config(
     //////////////////////////////
     // 0. Check term size
 
-    // TODO
+    {
+        let (Width(term_w), Height(term_h)) =
+            terminal_size().context("failed to get terminal size")?;
+        let term_w_min = 2 * u16::from(asc_width) + 4;
+        let term_h_min = 30;
+        if term_w < term_w_min || term_h < term_h_min {
+            printc(
+                format!(
+                    "&cWarning: Your terminal is too small ({term_w} * {term_h}).\nPlease resize \
+                     it to at least ({term_w_min} * {term_h_min}) for better experience."
+                ),
+                color_mode,
+            )
+            .expect("message should not contain invalid color codes");
+            input(Some("Press enter to ignore...")).context("failed to read input")?;
+        }
+    }
 
     //////////////////////////////
     // 1. Select color mode
@@ -297,9 +317,64 @@ fn create_config(
         clear_screen(Some(&title), color_mode, debug_mode)
             .expect("title should not contain invalid color codes");
 
-        let (term_w, _) = terminal_size().context("failed to get terminal size")?;
+        let (Width(term_w), _) = terminal_size().context("failed to get terminal size")?;
 
-        // TODO
+        /// Maps `t` in range `[a, b)` to range `[c, d)`.
+        fn remap(t: f32, a: f32, b: f32, c: f32, d: f32) -> f32 {
+            (t - a) * ((d - c) / (b - a)) + c
+        }
+
+        let spline = BSpline::builder()
+            .clamped()
+            .elements(["#12c2e9", "#c471ed", "#f7797d"].map(|hex| {
+                hex.parse::<Srgb<u8>>()
+                    .expect("hex colors should not be invalid")
+                    .into_linear::<f32>()
+            }))
+            .equidistant::<f32>()
+            .degree(1)
+            .normalized()
+            .constant::<2>()
+            .build()
+            .expect("building spline should not fail");
+        let [dmin, dmax] = spline.domain();
+        let gradient =
+            (0..term_w).map(|i| spline.gen(remap(i as f32, 0.0, term_w as f32, dmin, dmax)));
+        let ansi_8bit = gradient.clone().map(|rgb_32_color| {
+            Srgb::<u8>::from_linear(rgb_32_color)
+                .to_ansi_string(AnsiMode::Ansi256, ForegroundBackground::Background)
+        });
+        let ansi_rgb = gradient.map(|rgb_32_color| {
+            Srgb::<u8>::from_linear(rgb_32_color)
+                .to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Background)
+        });
+
+        {
+            let label = format!(
+                "{label:^term_w$}",
+                label = "8bit Color Testing",
+                term_w = usize::from(term_w)
+            );
+            let line = zip(ansi_8bit, label.chars()).fold(String::new(), |mut s, (c, t)| {
+                write!(s, "{c}{t}").unwrap();
+                s
+            });
+            printc(format!("&f{line}"), AnsiMode::Ansi256)
+                .expect("message should not contain invalid color codes");
+        }
+        {
+            let label = format!(
+                "{label:^term_w$}",
+                label = "RGB Color Testing",
+                term_w = usize::from(term_w)
+            );
+            let line = zip(ansi_rgb, label.chars()).fold(String::new(), |mut s, (c, t)| {
+                write!(s, "{c}{t}").unwrap();
+                s
+            });
+            printc(format!("&f{line}"), AnsiMode::Rgb)
+                .expect("message should not contain invalid color codes");
+        }
 
         println!();
         print_title_prompt(
@@ -314,7 +389,18 @@ fn create_config(
         .expect("message should not contain invalid color codes");
         println!();
 
-        todo!()
+        let opts = [AnsiMode::Ansi256, AnsiMode::Rgb].map(<&'static str>::from);
+        let choice = literal_input(
+            "Your choice?",
+            &opts[..],
+            <&'static str>::from(AnsiMode::Rgb),
+            true,
+            color_mode,
+        )?;
+        Ok((
+            choice.parse().expect("selected color mode should be valid"),
+            "Selected color mode",
+        ))
     };
 
     let color_mode = {
@@ -367,13 +453,11 @@ fn create_config(
     // Create flag lines
     let mut flags = Vec::with_capacity(Preset::COUNT);
     let spacing = {
-        let Some(spacing) = <Preset as VariantNames>::VARIANTS
+        let spacing = <Preset as VariantNames>::VARIANTS
             .iter()
             .map(|name| name.chars().count())
             .max()
-        else {
-            unreachable!();
-        };
+            .expect("preset name iterator should not be empty");
         let spacing: u8 = spacing.try_into().expect("`spacing` should fit in `u8`");
         cmp::max(spacing, 20)
     };
@@ -396,12 +480,13 @@ fn create_config(
 
     // Calculate flags per row
     let (flags_per_row, rows_per_page) = {
-        let (term_w, term_h) = terminal_size().context("failed to get terminal size")?;
-        let flags_per_row = term_w.0 / (u16::from(spacing) + 2);
+        let (Width(term_w), Height(term_h)) =
+            terminal_size().context("failed to get terminal size")?;
+        let flags_per_row = term_w / (u16::from(spacing) + 2);
         let flags_per_row: u8 = flags_per_row
             .try_into()
             .expect("`flags_per_row` should fit in `u8`");
-        let rows_per_page = cmp::max(1, (term_h.0 - 13) / 5);
+        let rows_per_page = cmp::max(1, (term_h - 13) / 5);
         let rows_per_page: u8 = rows_per_page
             .try_into()
             .expect("`rows_per_page` should fit in `u8`");
@@ -519,13 +604,11 @@ fn create_config(
     // 4. Dim/lighten colors
 
     let test_ascii = &TEST_ASCII[1..TEST_ASCII.len() - 1];
-    let Some(test_ascii_width) = test_ascii
+    let test_ascii_width = test_ascii
         .split('\n')
         .map(|line| line.graphemes(true).count())
         .max()
-    else {
-        unreachable!();
-    };
+        .expect("line iterator should not be empty");
     let test_ascii_width: u8 = test_ascii_width
         .try_into()
         .expect("`test_ascii_width` should fit in `u8`");
@@ -560,8 +643,8 @@ fn create_config(
 
         // Print cats
         {
-            let (term_w, _) = terminal_size().context("failed to get terminal size")?;
-            let num_cols = cmp::max(1, term_w.0 / (u16::from(test_ascii_width) + 2));
+            let (Width(term_w), _) = terminal_size().context("failed to get terminal size")?;
+            let num_cols = cmp::max(1, term_w / (u16::from(test_ascii_width) + 2));
             let num_cols: u8 = num_cols.try_into().expect("`num_cols` should fit in `u8`");
             const MIN: f32 = 0.15;
             const MAX: f32 = 0.85;
@@ -678,12 +761,13 @@ fn create_config(
 
     // Calculate amount of row/column that can be displayed on screen
     let (ascii_per_row, ascii_rows) = {
-        let (term_w, term_h) = terminal_size().context("failed to get terminal size")?;
-        let ascii_per_row = cmp::max(1, term_w.0 / (u16::from(asc_width) + 2));
+        let (Width(term_w), Height(term_h)) =
+            terminal_size().context("failed to get terminal size")?;
+        let ascii_per_row = cmp::max(1, term_w / (u16::from(asc_width) + 2));
         let ascii_per_row: u8 = ascii_per_row
             .try_into()
             .expect("`ascii_per_row` should fit in `u8`");
-        let ascii_rows = cmp::max(1, (term_h.0 - 8) / u16::from(asc_lines));
+        let ascii_rows = cmp::max(1, (term_h - 8) / u16::from(asc_lines));
         let ascii_rows: u8 = ascii_rows
             .try_into()
             .expect("`ascii_rows` should fit in `u8`");
@@ -838,6 +922,7 @@ fn create_config(
                 }
             })
             .expect("selected color alignment should be valid");
+        debug!(?color_align, "selected color alignment");
         break;
     }
 
@@ -845,7 +930,7 @@ fn create_config(
         &mut title,
         &mut option_counter,
         "Color alignment",
-        &format!("{color_align:?}"),
+        <&'static str>::from(color_align),
     );
 
     //////////////////////////////
