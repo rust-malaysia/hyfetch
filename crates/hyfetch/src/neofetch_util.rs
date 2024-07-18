@@ -11,6 +11,7 @@ use std::{env, fmt};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
+use itertools::Itertools;
 #[cfg(windows)]
 use normpath::PathExt as _;
 #[cfg(windows)]
@@ -133,21 +134,21 @@ impl ColorAlignment {
                                 .with_length(length)
                                 .context("failed to spread color profile to length")?
                         };
-                        let mut asc = String::new();
-                        for (i, line) in lines.into_iter().enumerate() {
-                            let line = line.replace(
-                                &format!("${{c{back}}}", back = u8::from(back)),
-                                &colors[i].to_ansi_string(color_mode, {
-                                    // note: this is "background" in the ascii art, but foreground
-                                    // text in terminal
-                                    ForegroundBackground::Foreground
-                                }),
-                            );
-                            asc.push_str(&line);
-                            asc.push_str(&reset);
-                            asc.push('\n');
-                        }
-                        asc
+                        lines
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, line)| {
+                                let line = line.replace(
+                                    &format!("${{c{back}}}", back = u8::from(back)),
+                                    &colors[i].to_ansi_string(color_mode, {
+                                        // note: this is "background" in the ascii art, but
+                                        // foreground text in terminal
+                                        ForegroundBackground::Foreground
+                                    }),
+                                );
+                                format!("{line}{reset}")
+                            })
+                            .join("\n")
                     },
                     Self::Vertical { .. } => {
                         unimplemented!(
@@ -193,21 +194,19 @@ impl ColorAlignment {
                                 .with_length(length)
                                 .context("failed to spread color profile to length")?
                         };
-                        let mut asc = String::new();
-                        for (i, line) in lines.into_iter().enumerate() {
-                            asc.push_str(
-                                &colors[i]
-                                    .to_ansi_string(color_mode, ForegroundBackground::Foreground),
-                            );
-                            asc.push_str(line);
-                            asc.push_str(&reset);
-                            asc.push('\n');
-                        }
-                        asc
+                        lines
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, line)| {
+                                let fore = colors[i]
+                                    .to_ansi_string(color_mode, ForegroundBackground::Foreground);
+                                format!("{fore}{line}{reset}")
+                            })
+                            .join("\n")
                     },
-                    Self::Vertical { .. } => {
-                        let mut asc = String::new();
-                        for line in lines {
+                    Self::Vertical { .. } => lines
+                        .into_iter()
+                        .map(|line| {
                             let line = color_profile
                                 .color_text(
                                     line,
@@ -216,12 +215,10 @@ impl ColorAlignment {
                                     false,
                                 )
                                 .context("failed to color text using color profile")?;
-                            asc.push_str(&line);
-                            asc.push_str(&reset);
-                            asc.push('\n');
-                        }
-                        asc
-                    },
+                            Ok(format!("{line}{reset}"))
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                        .join("\n"),
                     _ => {
                         unreachable!();
                     },
@@ -542,16 +539,13 @@ where
 
     let (w, _) = ascii_size(asc);
 
-    let mut buf = String::new();
-    for line in asc.split('\n') {
-        let (line_w, _) = ascii_size(line);
-        buf.push_str(line);
-        let pad = " ".repeat(usize::from(w - line_w));
-        buf.push_str(&pad);
-        buf.push('\n');
-    }
-
-    buf
+    asc.split('\n')
+        .map(|line| {
+            let (line_w, _) = ascii_size(line);
+            let pad = " ".repeat(usize::from(w - line_w));
+            format!("{line}{pad}")
+        })
+        .join("\n")
 }
 
 /// Fills the missing starting placeholders.
@@ -565,31 +559,36 @@ where
 
     let ac = NEOFETCH_COLORS_AC.get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
 
-    let mut new = String::new();
     let mut last = None;
-    for line in asc.split('\n') {
-        let mut matches = ac.find_iter(line).peekable();
+    Ok(asc
+        .split('\n')
+        .map(|line| {
+            let mut new = String::new();
+            let mut matches = ac.find_iter(line).peekable();
 
-        match matches.peek() {
-            Some(m) if m.start() == 0 || line[0..m.start()].trim_end_matches(' ').is_empty() => {
-                // line starts with neofetch color code, do nothing
-            },
-            _ => {
-                new.push_str(
-                    last.context("failed to find neofetch color code from a previous line")?,
-                );
-            },
-        }
-        new.push_str(line);
-        new.push('\n');
+            match matches.peek() {
+                Some(m)
+                    if m.start() == 0 || line[0..m.start()].trim_end_matches(' ').is_empty() =>
+                {
+                    // line starts with neofetch color code, do nothing
+                },
+                _ => {
+                    new.push_str(
+                        last.context("failed to find neofetch color code from a previous line")?,
+                    );
+                },
+            }
+            new.push_str(line);
 
-        // Get the last placeholder for the next line
-        if let Some(m) = matches.last() {
-            last = Some(&line[m.span()])
-        }
-    }
+            // Get the last placeholder for the next line
+            if let Some(m) = matches.last() {
+                last = Some(&line[m.span()])
+            }
 
-    Ok(new)
+            Ok(new)
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("\n"))
 }
 
 /// Runs neofetch command, returning the piped stdout output.
