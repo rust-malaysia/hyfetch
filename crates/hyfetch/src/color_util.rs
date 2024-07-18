@@ -4,10 +4,11 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use aho_corasick::AhoCorasick;
-use ansi_colours::AsRGB;
+use ansi_colours::{ansi256_from_grey, rgb_from_ansi256, AsRGB};
 use anyhow::{anyhow, Context, Result};
 use deranged::RangedU8;
-use palette::{IntoColorMut, LinSrgb, Okhsl, Srgb};
+use palette::color_difference::ImprovedCiede2000;
+use palette::{FromColor, IntoColor, IntoColorMut, Lab, LinSrgb, Okhsl, Srgb, SrgbLuma};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -50,6 +51,12 @@ const MINECRAFT_COLORS: [(&str, &str); 30] = [
     ("&M", "\x1b[29m"), // Disable strikethrough text
 ];
 const RGB_COLOR_PATTERNS: [&str; 2] = ["&gf(", "&gb("];
+
+/// See https://github.com/mina86/ansi_colours/blob/b9feefce10def2ac632b215ecd20830a4fca7836/src/ansi256.rs#L109
+const ANSI256_GRAYSCALE_COLORS: [u8; 30] = [
+    16, 59, 102, 145, 188, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244,
+    245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255,
+];
 
 static MINECRAFT_COLORS_AC: OnceLock<(AhoCorasick, Box<[&str; 30]>)> = OnceLock::new();
 static RGB_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
@@ -115,6 +122,16 @@ pub trait ToAnsiString {
 
 pub trait Theme {
     fn theme(&self) -> TerminalTheme;
+}
+
+pub trait ContrastGrayscale {
+    /// Calculates the grayscale foreground color which provides the highest
+    /// contrast against this background color.
+    ///
+    /// The returned color is one of the ANSI 256 (8-bit) grayscale colors.
+    ///
+    /// See https://upload.wikimedia.org/wikipedia/commons/1/15/Xterm_256color_chart.svg
+    fn contrast_grayscale(&self) -> SrgbLuma<u8>;
 }
 
 impl Lightness {
@@ -226,6 +243,33 @@ impl ToAnsiString for Srgb<u8> {
     }
 }
 
+impl ToAnsiString for SrgbLuma<u8> {
+    fn to_ansi_string(
+        &self,
+        mode: AnsiMode,
+        foreground_background: ForegroundBackground,
+    ) -> String {
+        let c: u8 = match foreground_background {
+            ForegroundBackground::Foreground => 38,
+            ForegroundBackground::Background => 48,
+        };
+        match mode {
+            AnsiMode::Rgb => {
+                let rgb_f32_color: LinSrgb = self.into_linear().into_color();
+                let [r, g, b]: [u8; 3] = Srgb::<u8>::from_linear(rgb_f32_color).into();
+                format!("\x1b[{c};2;{r};{g};{b}m")
+            },
+            AnsiMode::Ansi256 => {
+                let indexed = ansi256_from_grey(self.luma);
+                format!("\x1b[{c};5;{indexed}m")
+            },
+            AnsiMode::Ansi16 => {
+                unimplemented!();
+            },
+        }
+    }
+}
+
 impl Theme for Srgb<u8> {
     fn theme(&self) -> TerminalTheme {
         let mut rgb_f32_color: LinSrgb = self.into_linear();
@@ -239,6 +283,26 @@ impl Theme for Srgb<u8> {
                 TerminalTheme::Dark
             }
         }
+    }
+}
+
+impl ContrastGrayscale for Srgb<u8> {
+    fn contrast_grayscale(&self) -> SrgbLuma<u8> {
+        let self_lab_f32: Lab = self.into_linear().into_color();
+
+        let mut best_contrast = None;
+        for indexed in ANSI256_GRAYSCALE_COLORS {
+            let rgb_u8_color: Srgb<u8> = rgb_from_ansi256(indexed).into();
+            let lab_f32_color: Lab = rgb_u8_color.into_linear().into_color();
+            let diff = lab_f32_color.improved_difference(self_lab_f32);
+            best_contrast = match best_contrast {
+                Some((_, best_diff)) if diff > best_diff => Some((lab_f32_color, diff)),
+                None => Some((lab_f32_color, diff)),
+                best => best,
+            };
+        }
+        let (best_lab_f32, _) = best_contrast.expect("`best_contrast` should not be `None`");
+        SrgbLuma::from_color(best_lab_f32).into_format()
     }
 }
 
