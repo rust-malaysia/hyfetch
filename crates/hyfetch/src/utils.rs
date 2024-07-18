@@ -11,6 +11,50 @@ use directories::ProjectDirs;
 use normpath::PathExt as _;
 use tracing::debug;
 
+pub trait JoinWithNewline {
+    fn join_with_newline(self) -> String;
+}
+
+pub trait JoinResultsWithNewline {
+    fn join_results_with_newline(self) -> Result<String>;
+}
+
+impl<I, S> JoinWithNewline for I
+where
+    S: AsRef<str>,
+    I: Iterator<Item = S>,
+{
+    fn join_with_newline(mut self) -> String {
+        let mut result = String::new();
+        if let Some(first) = self.next() {
+            result.push_str(first.as_ref());
+            for item in self {
+                result.push('\n');
+                result.push_str(item.as_ref());
+            }
+        }
+        result
+    }
+}
+
+impl<I, S> JoinResultsWithNewline for I
+where
+    S: AsRef<str>,
+    I: Iterator<Item = Result<S>>,
+{
+    fn join_results_with_newline(mut self) -> Result<String> {
+        let mut result = String::new();
+        if let Some(first) = self.next() {
+            result.push_str(first?.as_ref());
+            for item in self {
+                result.push('\n');
+                result.push_str(item?.as_ref());
+            }
+        }
+        Ok(result)
+    }
+}
+
 pub fn get_cache_path() -> Result<PathBuf> {
     let path = ProjectDirs::from("", "", "hyfetch")
         .context("failed to get base dirs")?

@@ -783,7 +783,7 @@ fn create_config(
         let ascii_per_row: u8 = ascii_per_row
             .try_into()
             .expect("`ascii_per_row` should fit in `u8`");
-        let ascii_rows = cmp::max(1, (term_h - 8) / u16::from(asc_lines));
+        let ascii_rows = cmp::max(1, (term_h - 8) / (u16::from(asc_lines) + 2));
         let ascii_rows: u8 = ascii_rows
             .try_into()
             .expect("`ascii_rows` should fit in `u8`");
@@ -880,10 +880,11 @@ fn create_config(
                 .split('\n')
                 .map(ToOwned::to_owned)
                 .collect();
-            v.push(format!(
-                "{k:^asc_width$}",
-                asc_width = usize::from(asc_width)
-            ));
+            v.extend([
+                String::new(),
+                format!("{k:^asc_width$}", asc_width = usize::from(asc_width)),
+                String::new(),
+            ]);
             v
         });
 
@@ -891,7 +892,7 @@ fn create_config(
             let row: Vec<Vec<String>> = row.into_iter().collect();
 
             // Print by row
-            for i in 0..usize::from(asc_lines) + 1 {
+            for i in 0..usize::from(asc_lines) + 3 {
                 let mut line = String::new();
                 for lines in &row {
                     line.push_str(&lines[i]);
