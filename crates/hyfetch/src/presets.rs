@@ -606,8 +606,8 @@ impl ColorProfile {
     /// Creates a new color profile, with the colors set to the specified
     /// [`Okhsl`] lightness value.
     pub fn with_lightness(&self, assign_lightness: AssignLightness) -> Self {
-        let mut rgb_f32_colors: Vec<_> =
-            self.colors.iter().map(|c| c.into_format::<f32>()).collect();
+        let mut rgb_f32_colors: Vec<LinSrgb> =
+            self.colors.iter().map(|c| c.into_linear()).collect();
 
         {
             let okhsl_f32_colors: &mut [Okhsl] = &mut rgb_f32_colors.into_color_mut();
@@ -627,9 +627,9 @@ impl ColorProfile {
             }
         }
 
-        let rgb_u8_colors: Vec<_> = rgb_f32_colors
+        let rgb_u8_colors: Vec<Srgb<u8>> = rgb_f32_colors
             .into_iter()
-            .map(|c| c.into_format::<u8>())
+            .map(Srgb::<u8>::from_linear)
             .collect();
 
         Self {
@@ -657,12 +657,8 @@ impl ColorProfile {
 
     /// Creates another color profile with only the unique colors.
     pub fn unique_colors(&self) -> Self {
-        let unique_colors: IndexSet<[u8; 3]> = self.colors.iter().map(|c| (*c).into()).collect();
-        let unique_colors = {
-            let mut v = Vec::with_capacity(unique_colors.len());
-            v.extend(unique_colors.into_iter().map(Srgb::<u8>::from));
-            v
-        };
+        let unique_colors: IndexSet<[u8; 3]> = self.colors.iter().map(|&c| c.into()).collect();
+        let unique_colors: Vec<Srgb<u8>> = unique_colors.into_iter().map(|c| c.into()).collect();
         Self::new(unique_colors)
     }
 }

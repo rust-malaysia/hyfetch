@@ -13,8 +13,8 @@ use enterpolation::bspline::BSpline;
 use enterpolation::{Curve, Generator};
 use hyfetch::cli_options::options;
 use hyfetch::color_util::{
-    clear_screen, color, printc, ForegroundBackground, Lightness, NeofetchAsciiIndexedColor,
-    PresetIndexedColor, Theme, ToAnsiString,
+    clear_screen, color, printc, ContrastGrayscale, ForegroundBackground, Lightness,
+    NeofetchAsciiIndexedColor, PresetIndexedColor, Theme, ToAnsiString,
 };
 use hyfetch::models::Config;
 #[cfg(windows)]
@@ -27,7 +27,7 @@ use hyfetch::types::{AnsiMode, Backend, TerminalTheme};
 use hyfetch::utils::{get_cache_path, input};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use palette::Srgb;
+use palette::{LinSrgb, Srgb};
 use strum::{EnumCount, VariantArray, VariantNames};
 use terminal_colorsaurus::{background_color, QueryOptions};
 use terminal_size::{terminal_size, Height, Width};
@@ -244,7 +244,10 @@ fn create_config(
         } else if color_level.has_256 {
             AnsiMode::Ansi256
         } else if color_level.has_basic {
-            AnsiMode::Ansi16
+            unimplemented!(
+                "{mode} color mode not supported",
+                mode = <&'static str>::from(AnsiMode::Ansi16)
+            );
         } else {
             unreachable!();
         }
@@ -276,7 +279,7 @@ fn create_config(
         } else {
             format!("{k}:").into()
         };
-        title.push_str(&format!("\n&e{option_counter}. {k:<30} &~{v}"));
+        write!(title, "\n&e{option_counter}. {k:<30} &~{v}").unwrap();
         *option_counter += 1;
     }
 
@@ -309,6 +312,8 @@ fn create_config(
     //////////////////////////////
     // 1. Select color mode
 
+    let default_color_profile = Preset::Rainbow.color_profile();
+
     let select_color_mode = || -> Result<(AnsiMode, &str)> {
         if det_ansi == Some(AnsiMode::Rgb) {
             return Ok((AnsiMode::Rgb, "Detected color mode"));
@@ -319,18 +324,16 @@ fn create_config(
 
         let (Width(term_w), _) = terminal_size().context("failed to get terminal size")?;
 
-        /// Maps `t` in range `[a, b)` to range `[c, d)`.
-        fn remap(t: f32, a: f32, b: f32, c: f32, d: f32) -> f32 {
-            (t - a) * ((d - c) / (b - a)) + c
-        }
-
         let spline = BSpline::builder()
             .clamped()
-            .elements(["#12c2e9", "#c471ed", "#f7797d"].map(|hex| {
-                hex.parse::<Srgb<u8>>()
-                    .expect("hex colors should not be invalid")
-                    .into_linear::<f32>()
-            }))
+            .elements(
+                default_color_profile
+                    .unique_colors()
+                    .colors
+                    .iter()
+                    .map(|rgb_u8_color| rgb_u8_color.into_linear())
+                    .collect::<Vec<_>>(),
+            )
             .equidistant::<f32>()
             .degree(1)
             .normalized()
@@ -338,16 +341,14 @@ fn create_config(
             .build()
             .expect("building spline should not fail");
         let [dmin, dmax] = spline.domain();
-        let gradient =
-            (0..term_w).map(|i| spline.gen(remap(i as f32, 0.0, term_w as f32, dmin, dmax)));
-        let ansi_8bit = gradient.clone().map(|rgb_32_color| {
-            Srgb::<u8>::from_linear(rgb_32_color)
-                .to_ansi_string(AnsiMode::Ansi256, ForegroundBackground::Background)
-        });
-        let ansi_rgb = gradient.map(|rgb_32_color| {
-            Srgb::<u8>::from_linear(rgb_32_color)
-                .to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Background)
-        });
+        let gradient: Vec<LinSrgb> = (0..term_w)
+            .map(|i| spline.gen(remap(i as f32, 0.0, term_w as f32, dmin, dmax)))
+            .collect();
+
+        /// Maps `t` in range `[a, b)` to range `[c, d)`.
+        fn remap(t: f32, a: f32, b: f32, c: f32, d: f32) -> f32 {
+            (t - a) * ((d - c) / (b - a)) + c
+        }
 
         {
             let label = format!(
@@ -355,11 +356,20 @@ fn create_config(
                 label = "8bit Color Testing",
                 term_w = usize::from(term_w)
             );
-            let line = zip(ansi_8bit, label.chars()).fold(String::new(), |mut s, (c, t)| {
-                write!(s, "{c}{t}").unwrap();
-                s
-            });
-            printc(format!("&f{line}"), AnsiMode::Ansi256)
+            let line = zip(gradient.iter(), label.chars()).fold(
+                String::new(),
+                |mut s, (&rgb_f32_color, t)| {
+                    let rgb_u8_color = Srgb::<u8>::from_linear(rgb_f32_color);
+                    let back = rgb_u8_color
+                        .to_ansi_string(AnsiMode::Ansi256, ForegroundBackground::Background);
+                    let fore = rgb_u8_color
+                        .contrast_grayscale()
+                        .to_ansi_string(AnsiMode::Ansi256, ForegroundBackground::Foreground);
+                    write!(s, "{back}{fore}{t}").unwrap();
+                    s
+                },
+            );
+            printc(line, AnsiMode::Ansi256)
                 .expect("message should not contain invalid color codes");
         }
         {
@@ -368,12 +378,20 @@ fn create_config(
                 label = "RGB Color Testing",
                 term_w = usize::from(term_w)
             );
-            let line = zip(ansi_rgb, label.chars()).fold(String::new(), |mut s, (c, t)| {
-                write!(s, "{c}{t}").unwrap();
-                s
-            });
-            printc(format!("&f{line}"), AnsiMode::Rgb)
-                .expect("message should not contain invalid color codes");
+            let line = zip(gradient.iter(), label.chars()).fold(
+                String::new(),
+                |mut s, (&rgb_f32_color, t)| {
+                    let rgb_u8_color = Srgb::<u8>::from_linear(rgb_f32_color);
+                    let back = rgb_u8_color
+                        .to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Background);
+                    let fore = rgb_u8_color
+                        .contrast_grayscale()
+                        .to_ansi_string(AnsiMode::Ansi256, ForegroundBackground::Foreground);
+                    write!(s, "{back}{fore}{t}").unwrap();
+                    s
+                },
+            );
+            printc(line, AnsiMode::Rgb).expect("message should not contain invalid color codes");
         }
 
         println!();
@@ -537,16 +555,16 @@ fn create_config(
         println!();
     }
 
-    let preset_rainbow = Preset::Rainbow
-        .color_profile()
-        .with_lightness_adaptive(Config::default_lightness(theme), theme, use_overlay)
+    let default_lightness = Config::default_lightness(theme);
+    let preset_default_colored = default_color_profile
+        .with_lightness_adaptive(default_lightness, theme, use_overlay)
         .color_text(
             "preset",
             color_mode,
             ForegroundBackground::Foreground,
             false,
         )
-        .expect("coloring text with rainbow preset should not fail");
+        .expect("coloring text with default preset should not fail");
 
     let preset: Preset;
     let color_profile;
@@ -566,7 +584,7 @@ fn create_config(
         let selection = literal_input(
             format!(
                 "Which {preset} do you want to use? ",
-                preset = preset_rainbow
+                preset = preset_default_colored
             ),
             &opts[..],
             Preset::Rainbow.into(),
@@ -587,7 +605,7 @@ fn create_config(
                 &mut option_counter,
                 "Selected flag",
                 &color_profile
-                    .with_lightness_adaptive(Config::default_lightness(theme), theme, use_overlay)
+                    .with_lightness_adaptive(default_lightness, theme, use_overlay)
                     .color_text(
                         <&'static str>::from(preset),
                         color_mode,
@@ -689,8 +707,6 @@ fn create_config(
                     .expect("test ascii line should not contain invalid color codes");
             }
         }
-
-        let default_lightness = Config::default_lightness(theme);
 
         loop {
             println!();
