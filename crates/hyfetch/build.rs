@@ -226,9 +226,13 @@ where
             .next()
             .and_then(|pattern| pattern.trim().strip_suffix(')'))?;
 
+        // Unescape backslashes here because backslashes are escaped in neofetch
+        // for printf
+        let art = art.replace(r"\\", r"\");
+
         Some(AsciiDistro {
             pattern: pattern.to_owned(),
-            art: art.to_owned(),
+            art,
         })
     }
     blocks
