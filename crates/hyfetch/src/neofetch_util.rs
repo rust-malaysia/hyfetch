@@ -1,8 +1,9 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 #[cfg(windows)]
 use std::io;
-use std::io::Write;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -57,33 +58,6 @@ pub enum ColorAlignment {
 }
 
 impl ColorAlignment {
-    /// Creates a new color alignment, with the specified foreground-background
-    /// configuration.
-    pub fn with_fore_back(&self, fore_back: Option<ForeBackColorPair>) -> Result<Self> {
-        match self {
-            Self::Horizontal { .. } => Ok(Self::Horizontal { fore_back }),
-            Self::Vertical { .. } => {
-                if fore_back.is_some() {
-                    debug!(
-                        "foreground-background configuration not implemented for vertical color \
-                         alignment; ignoring"
-                    );
-                }
-                Ok(Self::Vertical { fore_back: None })
-            },
-            Self::Custom { colors } => {
-                if fore_back.is_some() {
-                    return Err(anyhow!(
-                        "foreground-background configuration not supported for custom colors"
-                    ));
-                }
-                Ok(Self::Custom {
-                    colors: colors.clone(),
-                })
-            },
-        }
-    }
-
     /// Uses the color alignment to recolor an ascii art.
     #[tracing::instrument(level = "debug", skip(asc))]
     pub fn recolor_ascii<S>(
@@ -100,9 +74,6 @@ impl ColorAlignment {
 
         let asc = match self {
             &Self::Horizontal {
-                fore_back: Some((fore, back)),
-            }
-            | &Self::Vertical {
                 fore_back: Some((fore, back)),
             } => {
                 let asc = fill_starting(asc)
@@ -121,43 +92,28 @@ impl ColorAlignment {
                     .expect("foreground color should not be invalid"),
                 );
 
-                let lines: Vec<_> = asc.split('\n').collect();
-
                 // Add new colors
-                let asc = match self {
-                    Self::Horizontal { .. } => {
-                        let ColorProfile { colors } = {
-                            let length = lines.len();
-                            let length: u8 =
-                                length.try_into().expect("`length` should fit in `u8`");
-                            color_profile
-                                .with_length(length)
-                                .context("failed to spread color profile to length")?
-                        };
-                        lines
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, line)| {
-                                let line = line.replace(
-                                    &format!("${{c{back}}}", back = u8::from(back)),
-                                    &colors[i].to_ansi_string(color_mode, {
-                                        // note: this is "background" in the ascii art, but
-                                        // foreground text in terminal
-                                        ForegroundBackground::Foreground
-                                    }),
-                                );
-                                format!("{line}{reset}")
-                            })
-                            .join("\n")
-                    },
-                    Self::Vertical { .. } => {
-                        unimplemented!(
-                            "vertical color alignment with fore and back colors not implemented"
-                        );
-                    },
-                    _ => {
-                        unreachable!();
-                    },
+                let asc = {
+                    let ColorProfile { colors } = {
+                        let (_, length) = ascii_size(&asc);
+                        color_profile
+                            .with_length(length)
+                            .context("failed to spread color profile to length")?
+                    };
+                    asc.split('\n')
+                        .enumerate()
+                        .map(|(i, line)| {
+                            let line = line.replace(
+                                &format!("${{c{back}}}", back = u8::from(back)),
+                                &colors[i].to_ansi_string(color_mode, {
+                                    // note: this is "background" in the ascii art, but
+                                    // foreground text in terminal
+                                    ForegroundBackground::Foreground
+                                }),
+                            );
+                            format!("{line}{reset}")
+                        })
+                        .join("\n")
                 };
 
                 // Remove existing colors
@@ -167,6 +123,105 @@ impl ColorAlignment {
                     const N: usize = NEOFETCH_COLOR_PATTERNS.len();
                     const REPLACEMENTS: [&str; N] = [""; N];
                     ac.replace_all(&asc, &REPLACEMENTS)
+                };
+
+                asc
+            },
+            &Self::Vertical {
+                fore_back: Some((fore, back)),
+            } => {
+                let asc = fill_starting(asc)
+                    .context("failed to fill in starting neofetch color codes")?;
+
+                let color_profile = {
+                    let (length, _) = ascii_size(&asc);
+                    color_profile
+                        .with_length(length)
+                        .context("failed to spread color profile to length")?
+                };
+
+                // Apply colors
+                let asc = {
+                    let ac = NEOFETCH_COLORS_AC
+                        .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+                    asc.split('\n')
+                        .map(|line| {
+                            let mut matches = ac.find_iter(line).peekable();
+                            let mut dst = String::new();
+                            let mut offset = 0;
+                            loop {
+                                let current = matches.next();
+                                let next = matches.peek();
+                                let (neofetch_color_idx, span, done) = match (current, next) {
+                                    (Some(m), Some(m_next)) => {
+                                        let neofetch_color_idx: NeofetchAsciiIndexedColor = line
+                                            [m.start() + 3..m.end() - 1]
+                                            .parse()
+                                            .expect("neofetch color index should be valid");
+                                        offset += m.len();
+                                        let mut span = m.span();
+                                        span.start = m.end();
+                                        span.end = m_next.start();
+                                        (neofetch_color_idx, span, false)
+                                    },
+                                    (Some(m), None) => {
+                                        // Last color code
+                                        let neofetch_color_idx: NeofetchAsciiIndexedColor = line
+                                            [m.start() + 3..m.end() - 1]
+                                            .parse()
+                                            .expect("neofetch color index should be valid");
+                                        offset += m.len();
+                                        let mut span = m.span();
+                                        span.start = m.end();
+                                        span.end = line.len();
+                                        (neofetch_color_idx, span, true)
+                                    },
+                                    (None, _) => {
+                                        // No color code in the entire line
+                                        unreachable!(
+                                            "`fill_starting` ensured each line of ascii art \
+                                             starts with neofetch color code"
+                                        );
+                                    },
+                                };
+                                let txt = &line[span];
+
+                                if neofetch_color_idx == fore {
+                                    let fore = color(
+                                        match theme {
+                                            TerminalTheme::Light => "&0",
+                                            TerminalTheme::Dark => "&f",
+                                        },
+                                        color_mode,
+                                    )
+                                    .expect("foreground color should not be invalid");
+                                    write!(dst, "{fore}{txt}{reset}").unwrap();
+                                } else if neofetch_color_idx == back {
+                                    dst.push_str(
+                                        &ColorProfile::new(Vec::from(
+                                            &color_profile.colors
+                                                [span.start - offset..span.end - offset],
+                                        ))
+                                        .color_text(
+                                            txt,
+                                            color_mode,
+                                            ForegroundBackground::Foreground,
+                                            false,
+                                        )
+                                        .context("failed to color text using color profile")?,
+                                    );
+                                } else {
+                                    dst.push_str(txt);
+                                }
+
+                                if done {
+                                    break;
+                                }
+                            }
+                            Ok(dst)
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                        .join("\n")
                 };
 
                 asc
@@ -187,9 +242,7 @@ impl ColorAlignment {
                 match self {
                     Self::Horizontal { .. } => {
                         let ColorProfile { colors } = {
-                            let length = lines.len();
-                            let length: u8 =
-                                length.try_into().expect("`length` should fit in `u8`");
+                            let (_, length) = ascii_size(&asc);
                             color_profile
                                 .with_length(length)
                                 .context("failed to spread color profile to length")?
@@ -215,7 +268,7 @@ impl ColorAlignment {
                                     false,
                                 )
                                 .context("failed to color text using color profile")?;
-                            Ok(format!("{line}{reset}"))
+                            Ok(line)
                         })
                         .collect::<Result<Vec<_>>>()?
                         .join("\n"),
@@ -247,6 +300,12 @@ impl ColorAlignment {
                     }
                     ac.replace_all(&asc, &replacements)
                 };
+
+                // Reset colors at end of each line to prevent color bleeding
+                let asc = asc
+                    .split('\n')
+                    .map(|line| format!("{line}{reset}"))
+                    .join("\n");
 
                 asc
             },
