@@ -162,11 +162,8 @@ fn main() -> Result<()> {
     };
     let color_align = if fore_back.is_some() {
         match config.color_align {
-            ca @ ColorAlignment::Horizontal { .. } | ca @ ColorAlignment::Vertical { .. } => {
-                ca.with_fore_back(fore_back).context(
-                    "failed to create color alignment with foreground-background configuration",
-                )?
-            },
+            ColorAlignment::Horizontal { .. } => ColorAlignment::Horizontal { fore_back },
+            ColorAlignment::Vertical { .. } => ColorAlignment::Vertical { fore_back },
             ca @ ColorAlignment::Custom { .. } => ca,
         }
     } else {
@@ -545,12 +542,12 @@ fn create_config(
 
     fn print_flag_row(row: &[[String; 4]], color_mode: AnsiMode) {
         for i in 0..4 {
-            let mut line = String::new();
+            let mut line = Vec::new();
             for flag in row {
-                line.push_str(&flag[i]);
-                line.push_str("  ");
+                line.push(&*flag[i]);
             }
-            printc(line, color_mode).expect("flag line should not contain invalid color codes");
+            printc(line.join("  "), color_mode)
+                .expect("flag line should not contain invalid color codes");
         }
         println!();
     }
@@ -698,12 +695,11 @@ fn create_config(
                 })
                 .collect();
             for i in 0..usize::from(test_ascii_height) {
-                let mut line = String::new();
+                let mut line = Vec::new();
                 for lines in &row {
-                    line.push_str(&lines[i]);
-                    line.push_str("  ");
+                    line.push(&*lines[i]);
                 }
-                printc(line, color_mode)
+                printc(line.join("  "), color_mode)
                     .expect("test ascii line should not contain invalid color codes");
             }
         }
@@ -783,7 +779,7 @@ fn create_config(
         let ascii_per_row: u8 = ascii_per_row
             .try_into()
             .expect("`ascii_per_row` should fit in `u8`");
-        let ascii_rows = cmp::max(1, (term_h - 8) / u16::from(asc_lines));
+        let ascii_rows = cmp::max(1, (term_h - 8) / (u16::from(asc_lines) + 1));
         let ascii_rows: u8 = ascii_rows
             .try_into()
             .expect("`ascii_rows` should fit in `u8`");
@@ -793,18 +789,8 @@ fn create_config(
     // Displays horizontal and vertical arrangements in the first iteration, but
     // hide them in later iterations
     let hv_arrangements = [
-        (
-            "Horizontal",
-            ColorAlignment::Horizontal { fore_back: None }
-                .with_fore_back(fore_back)
-                .expect("horizontal color alignment should not be invalid"),
-        ),
-        (
-            "Vertical",
-            ColorAlignment::Vertical { fore_back: None }
-                .with_fore_back(fore_back)
-                .expect("vertical color alignment should not be invalid"),
-        ),
+        ("Horizontal", ColorAlignment::Horizontal { fore_back }),
+        ("Vertical", ColorAlignment::Vertical { fore_back }),
     ];
     let mut arrangements: IndexMap<Cow<str>, ColorAlignment> =
         hv_arrangements.map(|(k, ca)| (k.into(), ca)).into();
@@ -892,12 +878,11 @@ fn create_config(
 
             // Print by row
             for i in 0..usize::from(asc_lines) + 1 {
-                let mut line = String::new();
+                let mut line = Vec::new();
                 for lines in &row {
-                    line.push_str(&lines[i]);
-                    line.push_str("  ");
+                    line.push(&*lines[i]);
                 }
-                printc(line, color_mode)
+                printc(line.join("  "), color_mode)
                     .expect("ascii line should not contain invalid color codes");
             }
 
