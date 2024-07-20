@@ -49,6 +49,14 @@ where
             .replace(|c: char| c.is_ascii_punctuation() || c == ' ', "_")
             .nfc()
             .collect::<String>();
+        if variants.contains_key(&variant) {
+            let variant_var = format!("{variant}_varietas");
+            if variants.contains_key(&variant_var) {
+                todo!("too many name clashes in ascii distro patterns: {variant}");
+            }
+            variants.insert(variant_var, distro);
+            continue;
+        }
         variants.insert(variant, distro);
     }
 
@@ -94,7 +102,7 @@ impl Distro {
                     ));
                     continue;
                 }
-                println!("cargo:warning=TODO: Cannot properly parse: {m}");
+                todo!("cannot properly parse: {m}");
             }
 
             // Exact matches
