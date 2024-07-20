@@ -8,7 +8,7 @@ use bpaf::{construct, long, OptionParser, Parser};
 use directories::BaseDirs;
 use strum::VariantNames;
 
-use crate::color_util::Lightness;
+use crate::color_util::{color, Lightness};
 use crate::presets::Preset;
 use crate::types::{AnsiMode, Backend};
 
@@ -170,6 +170,13 @@ BACKEND={{{backends}}}",
         ask_exit,
     })
     .to_options()
+    .header(
+        &*color(
+            "&l&bhyfetch&~&L - neofetch with flags <3",
+            AnsiMode::Ansi256,
+        )
+        .expect("header should not contain invalid color codes"),
+    )
     .version(env!("CARGO_PKG_VERSION"))
 }
 

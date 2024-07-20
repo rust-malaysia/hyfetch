@@ -20,7 +20,8 @@ use hyfetch::models::Config;
 #[cfg(windows)]
 use hyfetch::neofetch_util::ensure_git_bash;
 use hyfetch::neofetch_util::{
-    self, ascii_size, get_distro_ascii, ColorAlignment, NEOFETCH_COLORS_AC, NEOFETCH_COLOR_PATTERNS,
+    self, ascii_size, fastfetch_path, get_distro_ascii, ColorAlignment, NEOFETCH_COLORS_AC,
+    NEOFETCH_COLOR_PATTERNS,
 };
 use hyfetch::presets::{AssignLightness, Preset};
 use hyfetch::types::{AnsiMode, Backend, TerminalTheme};
@@ -28,6 +29,8 @@ use hyfetch::utils::{get_cache_path, input};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use palette::{LinSrgb, Srgb};
+use serde::Serialize;
+use serde_json::ser::PrettyFormatter;
 use strum::{EnumCount, VariantArray, VariantNames};
 use terminal_colorsaurus::{background_color, QueryOptions};
 use terminal_size::{terminal_size, Height, Width};
@@ -192,18 +195,18 @@ fn read_config(path: &Path) -> Result<Option<Config>> {
             return Ok(None);
         },
         Err(err) => {
-            return Err(err).with_context(|| format!("failed to open {path:?}"));
+            return Err(err).with_context(|| format!("failed to open file {path:?} for reading"));
         },
     };
 
     let mut buf = String::new();
 
     file.read_to_string(&mut buf)
-        .with_context(|| format!("failed to read {path:?}"))?;
+        .with_context(|| format!("failed to read from file {path:?}"))?;
 
     let deserializer = &mut serde_json::Deserializer::from_str(&buf);
     let config: Config = serde_path_to_error::deserialize(deserializer)
-        .with_context(|| format!("failed to parse {path:?}"))?;
+        .with_context(|| format!("failed to parse config from file {path:?}"))?;
 
     debug!(?config, "read config");
 
@@ -243,7 +246,7 @@ fn create_config(
         } else if color_level.has_basic {
             unimplemented!(
                 "{mode} color mode not supported",
-                mode = <&'static str>::from(AnsiMode::Ansi16)
+                mode = AnsiMode::Ansi16.as_ref()
             );
         } else {
             unreachable!();
@@ -302,7 +305,7 @@ fn create_config(
                 color_mode,
             )
             .expect("message should not contain invalid color codes");
-            input(Some("Press enter to ignore...")).context("failed to read input")?;
+            input(Some("Press enter to continue...")).context("failed to read input")?;
         }
     }
 
@@ -397,18 +400,13 @@ fn create_config(
             "Which &bcolor system &ado you want to use?",
             color_mode,
         );
-        printc(
-            r#"(If you can't see colors under "RGB Color Testing", please choose 8bit)"#,
-            color_mode,
-        )
-        .expect("message should not contain invalid color codes");
+        println!(r#"(If you can't see colors under "RGB Color Testing", please choose 8bit)"#);
         println!();
 
-        let opts = [AnsiMode::Ansi256, AnsiMode::Rgb].map(<&'static str>::from);
         let choice = literal_input(
             "Your choice?",
-            &opts[..],
-            <&'static str>::from(AnsiMode::Rgb),
+            AnsiMode::VARIANTS,
+            AnsiMode::Rgb.as_ref(),
             true,
             color_mode,
         )?;
@@ -421,7 +419,7 @@ fn create_config(
     let color_mode = {
         let (color_mode, ttl) = select_color_mode().context("failed to select color mode")?;
         debug!(?color_mode, "selected color mode");
-        update_title(&mut title, &mut option_counter, ttl, color_mode.into());
+        update_title(&mut title, &mut option_counter, ttl, color_mode.as_ref());
         color_mode
     };
 
@@ -441,11 +439,10 @@ fn create_config(
             "Is your terminal in &blight mode&~ or &4dark mode&~?",
             color_mode,
         );
-        let opts = [TerminalTheme::Light, TerminalTheme::Dark].map(<&'static str>::from);
         let choice = literal_input(
             "",
-            &opts[..],
-            <&'static str>::from(TerminalTheme::Dark),
+            TerminalTheme::VARIANTS,
+            TerminalTheme::Dark.as_ref(),
             true,
             color_mode,
         )?;
@@ -458,7 +455,7 @@ fn create_config(
     let theme = {
         let (theme, ttl) = select_theme().context("failed to select theme")?;
         debug!(?theme, "selected theme");
-        update_title(&mut title, &mut option_counter, ttl, theme.into());
+        update_title(&mut title, &mut option_counter, ttl, theme.as_ref());
         theme
     };
 
@@ -486,10 +483,11 @@ fn create_config(
                 false,
             )
             .with_context(|| format!("failed to color flag using preset: {preset:?}"))?;
-        let name = {
-            let name: &'static str = preset.into();
-            format!("{name:^spacing$}", spacing = usize::from(spacing))
-        };
+        let name = format!(
+            "{name:^spacing$}",
+            name = preset.as_ref(),
+            spacing = usize::from(spacing)
+        );
         flags.push([name, flag.clone(), flag.clone(), flag]);
     }
 
@@ -527,12 +525,8 @@ fn create_config(
         clear_screen(Some(&title), color_mode, debug_mode)
             .expect("title should not contain invalid color codes");
         print_title_prompt(option_counter, "Let's choose a flag!", color_mode);
-        printc("Available flag presets:", color_mode)
-            .expect("prompt should not contain invalid color codes");
-        {
-            let page_num = page_num + 1;
-            println!("Page: {page_num} of {num_pages}");
-        }
+        println!("Available flag presets:");
+        println!("Page: {page_num} of {num_pages}", page_num = page_num + 1);
         println!();
         for &row in page {
             print_flag_row(row, color_mode);
@@ -570,7 +564,7 @@ fn create_config(
     loop {
         print_flag_page(&pages[usize::from(page)], page);
 
-        let mut opts = Vec::from(<Preset as VariantNames>::VARIANTS);
+        let mut opts: Vec<&str> = <Preset as VariantNames>::VARIANTS.into();
         if page < num_pages - 1 {
             opts.push("next");
         }
@@ -584,7 +578,7 @@ fn create_config(
                 preset = preset_default_colored
             ),
             &opts[..],
-            Preset::Rainbow.into(),
+            Preset::Rainbow.as_ref(),
             false,
             color_mode,
         )
@@ -604,7 +598,7 @@ fn create_config(
                 &color_profile
                     .with_lightness_adaptive(default_lightness, theme, use_overlay)
                     .color_text(
-                        <&'static str>::from(preset),
+                        preset.as_ref(),
                         color_mode,
                         ForegroundBackground::Foreground,
                         false,
@@ -640,18 +634,14 @@ fn create_config(
             "Let's adjust the color brightness!",
             color_mode,
         );
-        printc(
-            format!(
-                "The colors might be a little bit too {bright_dark} for {light_dark} mode.",
-                bright_dark = match theme {
-                    TerminalTheme::Light => "bright",
-                    TerminalTheme::Dark => "dark",
-                },
-                light_dark = <&'static str>::from(theme)
-            ),
-            color_mode,
-        )
-        .expect("message should not contain invalid color codes");
+        println!(
+            "The colors might be a little bit too {bright_dark} for {light_dark} mode.",
+            bright_dark = match theme {
+                TerminalTheme::Light => "bright",
+                TerminalTheme::Dark => "dark",
+            },
+            light_dark = theme.as_ref()
+        );
         println!();
 
         let color_align = ColorAlignment::Horizontal { fore_back: None };
@@ -706,16 +696,12 @@ fn create_config(
 
         loop {
             println!();
-            printc(
-                format!(
-                    "Which brightness level looks the best? (Default: {default:.0}% for \
-                     {light_dark} mode)",
-                    default = f32::from(default_lightness) * 100.0,
-                    light_dark = <&'static str>::from(theme)
-                ),
-                color_mode,
-            )
-            .expect("prompt should not contain invalid color codes");
+            println!(
+                "Which brightness level looks the best? (Default: {default:.0}% for {light_dark} \
+                 mode)",
+                default = f32::from(default_lightness) * 100.0,
+                light_dark = theme.as_ref()
+            );
             let lightness = input(Some("> "))
                 .context("failed to read input")?
                 .trim()
@@ -894,12 +880,10 @@ fn create_config(
             "Let's choose a color arrangement!",
             color_mode,
         );
-        printc(
+        println!(
             "You can choose standard horizontal or vertical alignment, or use one of the random \
-             color schemes.",
-            color_mode,
-        )
-        .expect("message should not contain invalid color codes");
+             color schemes."
+        );
         println!(r#"You can type "roll" to randomize again."#);
         println!();
         let mut opts: Vec<Cow<str>> = ["horizontal", "vertical", "roll"].map(Into::into).into();
@@ -930,23 +914,94 @@ fn create_config(
     update_title(
         &mut title,
         &mut option_counter,
-        "Color alignment",
-        <&'static str>::from(color_align),
+        "Selected color alignment",
+        color_align.as_ref(),
     );
 
     //////////////////////////////
     // 6. Select *fetch backend
 
-    let select_backend = || {
+    let select_backend = || -> Result<Backend> {
         clear_screen(Some(&title), color_mode, debug_mode)
             .expect("title should not contain invalid color codes");
+        print_title_prompt(option_counter, "Select a *fetch backend", color_mode);
 
-        todo!()
+        // Check if fastfetch is installed
+        let fastfetch_path = fastfetch_path().context("failed to get fastfetch path")?;
+
+        // Check if qwqfetch is installed
+        // TODO: qwqfetch
+
+        printc(
+            "- &bneofetch&r: Written in bash, &nbest compatibility&r on Unix systems",
+            color_mode,
+        )
+        .expect("message should not contain invalid color codes");
+        printc(
+            format!(
+                "- &bfastfetch&r: Written in C, &nbest performance&r {installed_not_installed}",
+                installed_not_installed = fastfetch_path
+                    .map(|path| format!("&a(Installed at {path})", path = path.display()))
+                    .unwrap_or_else(|| "&c(Not installed)".to_owned())
+            ),
+            color_mode,
+        )
+        .expect("message should not contain invalid color codes");
+        // TODO: qwqfetch
+        println!();
+
+        let choice = literal_input(
+            "Your choice?",
+            Backend::VARIANTS,
+            backend.as_ref(),
+            true,
+            color_mode,
+        )?;
+        Ok(choice.parse().expect("selected backend should be valid"))
     };
 
-    let backend = select_backend();
+    let backend = select_backend().context("failed to select backend")?;
+    update_title(
+        &mut title,
+        &mut option_counter,
+        "Selected backend",
+        backend.as_ref(),
+    );
 
-    todo!()
+    // Create config
+    clear_screen(Some(&title), color_mode, debug_mode)
+        .expect("title should not contain invalid color codes");
+    let config = Config {
+        preset,
+        mode: color_mode,
+        light_dark: theme,
+        lightness: Some(lightness),
+        color_align,
+        backend,
+        args: None,
+        distro: distro.cloned(),
+        pride_month_disable: false,
+    };
+    debug!(?config, "created config");
+
+    // Save config
+    let save = literal_input("Save config?", &["y", "n"], "y", true, color_mode)?;
+    if save == "y" {
+        let file = File::options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .with_context(|| format!("failed to open file {path:?} for writing"))?;
+        let mut serializer =
+            serde_json::Serializer::with_formatter(file, PrettyFormatter::with_indent(b"    "));
+        config
+            .serialize(&mut serializer)
+            .with_context(|| format!("failed to write config to file {path:?}"))?;
+        debug!(?path, "saved config");
+    }
+
+    Ok(config)
 }
 
 /// Asks the user to provide an input among a list of options.

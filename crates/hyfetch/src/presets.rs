@@ -5,7 +5,7 @@ use indexmap::IndexSet;
 use palette::num::ClampAssign;
 use palette::{IntoColorMut, LinSrgb, Okhsl, Srgb};
 use serde::{Deserialize, Serialize};
-use strum::{EnumCount, EnumString, IntoStaticStr, VariantArray, VariantNames};
+use strum::{AsRefStr, EnumCount, EnumString, VariantArray, VariantNames};
 use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -17,10 +17,10 @@ use crate::types::{AnsiMode, TerminalTheme};
     Clone,
     Hash,
     Debug,
+    AsRefStr,
     Deserialize,
     EnumCount,
     EnumString,
-    IntoStaticStr,
     Serialize,
     VariantArray,
     VariantNames,

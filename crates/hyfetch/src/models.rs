@@ -10,7 +10,7 @@ pub struct Config {
     pub preset: Preset,
     pub mode: AnsiMode,
     pub light_dark: TerminalTheme,
-    lightness: Option<Lightness>,
+    pub lightness: Option<Lightness>,
     pub color_align: ColorAlignment,
     pub backend: Backend,
     #[serde(default)]
