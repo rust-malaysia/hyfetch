@@ -1,12 +1,12 @@
 use std::path::PathBuf;
-use std::str::FromStr;
+use std::str::FromStr as _;
 
-use anyhow::Context;
+use anyhow::Context as _;
 #[cfg(feature = "autocomplete")]
 use bpaf::ShellComp;
-use bpaf::{construct, long, OptionParser, Parser};
+use bpaf::{construct, long, OptionParser, Parser as _};
 use directories::BaseDirs;
-use strum::VariantNames;
+use strum::VariantNames as _;
 
 use crate::color_util::{color, Lightness};
 use crate::presets::Preset;

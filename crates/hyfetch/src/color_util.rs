@@ -1,14 +1,16 @@
-use std::io::{self, Write};
+use std::io::{self, Write as _};
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
 use std::sync::OnceLock;
 
 use aho_corasick::AhoCorasick;
-use ansi_colours::{ansi256_from_grey, rgb_from_ansi256, AsRGB};
-use anyhow::{anyhow, Context, Result};
+use ansi_colours::{ansi256_from_grey, rgb_from_ansi256, AsRGB as _};
+use anyhow::{anyhow, Context as _, Result};
 use deranged::RangedU8;
-use palette::color_difference::ImprovedCiede2000;
-use palette::{FromColor, IntoColor, IntoColorMut, Lab, LinSrgb, Okhsl, Srgb, SrgbLuma};
+use palette::color_difference::ImprovedCiede2000 as _;
+use palette::{
+    FromColor as _, IntoColor as _, IntoColorMut as _, Lab, LinSrgb, Okhsl, Srgb, SrgbLuma,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -64,7 +66,7 @@ static RGB_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
 /// Represents the lightness component in [`Okhsl`].
 ///
 /// The range of valid values is
-/// `(`[`Lightness::MIN`]`..=`[`Lightness::MAX`]`)`.
+/// [`Lightness::MIN`]`..=`[`Lightness::MAX`]
 ///
 /// [`Okhsl`]: palette::Okhsl
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Deserialize, Serialize)]
@@ -92,8 +94,7 @@ pub enum ParseLightnessError {
 /// neofetch ascii art.
 ///
 /// The range of valid values as supported in neofetch is
-/// `(`[`NeofetchAsciiIndexedColor::MIN`]`..
-/// =`[`NeofetchAsciiIndexedColor::MAX`]`)`.
+/// [`NeofetchAsciiIndexedColor::MIN`]`..=`[`NeofetchAsciiIndexedColor::MAX`]
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Deserialize, Serialize)]
 pub struct NeofetchAsciiIndexedColor(
     RangedU8<{ NeofetchAsciiIndexedColor::MIN }, { NeofetchAsciiIndexedColor::MAX }>,
@@ -130,7 +131,7 @@ pub trait ContrastGrayscale {
     ///
     /// The returned color is one of the ANSI 256 (8-bit) grayscale colors.
     ///
-    /// See https://upload.wikimedia.org/wikipedia/commons/1/15/Xterm_256color_chart.svg
+    /// See <https://upload.wikimedia.org/wikipedia/commons/1/15/Xterm_256color_chart.svg>
     fn contrast_grayscale(&self) -> SrgbLuma<u8>;
 }
 

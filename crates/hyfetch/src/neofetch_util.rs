@@ -10,9 +10,9 @@ use std::sync::OnceLock;
 use std::{env, fmt};
 
 use aho_corasick::AhoCorasick;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use indexmap::IndexMap;
-use itertools::Itertools;
+use itertools::Itertools as _;
 #[cfg(windows)]
 use normpath::PathExt as _;
 #[cfg(windows)]
@@ -21,15 +21,16 @@ use serde::{Deserialize, Serialize};
 use strum::AsRefStr;
 use tempfile::NamedTempFile;
 use tracing::debug;
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::color_util::{
-    color, ForegroundBackground, NeofetchAsciiIndexedColor, PresetIndexedColor, ToAnsiString,
+    color, printc, ForegroundBackground, NeofetchAsciiIndexedColor, PresetIndexedColor,
+    ToAnsiString as _,
 };
 use crate::distros::Distro;
 use crate::presets::ColorProfile;
 use crate::types::{AnsiMode, Backend, TerminalTheme};
-use crate::utils::{find_file, find_in_path, process_command_status};
+use crate::utils::{find_file, find_in_path, input, process_command_status};
 
 pub const NEOFETCH_COLOR_PATTERNS: [&str; 6] =
     ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
@@ -292,8 +293,8 @@ impl ColorAlignment {
                     const N: usize = NEOFETCH_COLOR_PATTERNS.len();
                     let mut replacements = vec![Cow::from(""); N];
                     for (&ai, &pi) in custom_colors {
-                        let ai: u8 = ai.into();
-                        let pi: u8 = pi.into();
+                        let ai = u8::from(ai);
+                        let pi = u8::from(pi);
                         replacements[usize::from(ai - 1)] = colors[usize::from(pi)]
                             .to_ansi_string(color_mode, ForegroundBackground::Foreground)
                             .into();
@@ -339,12 +340,98 @@ impl ColorAlignment {
             | Distro::Ultramarine_Linux
             | Distro::Univention
             | Distro::Vanilla
-            | Distro::Xubuntu => Some((2u8.try_into().unwrap(), 1u8.try_into().unwrap())),
+            | Distro::Xubuntu => Some((2, 1)),
 
-            Distro::Antergos => Some((1u8.try_into().unwrap(), 2u8.try_into().unwrap())),
+            Distro::Antergos => Some((1, 2)),
 
             _ => None,
         }
+        .map(|(fore, back): (u8, u8)| {
+            (
+                fore.try_into()
+                    .expect("`fore` should be a valid neofetch color index"),
+                back.try_into()
+                    .expect("`back` should be a valid neofetch color index"),
+            )
+        })
+    }
+}
+
+/// Asks the user to provide an input among a list of options.
+pub fn literal_input<'a, S1, S2>(
+    prompt: S1,
+    options: &'a [S2],
+    default: &str,
+    show_options: bool,
+    color_mode: AnsiMode,
+) -> Result<&'a str>
+where
+    S1: AsRef<str>,
+    S2: AsRef<str>,
+{
+    let prompt = prompt.as_ref();
+
+    if show_options {
+        let options_text = options
+            .iter()
+            .map(|o| {
+                let o = o.as_ref();
+
+                if o == default {
+                    format!("&l&n{o}&L&N")
+                } else {
+                    o.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        printc(format!("{prompt} ({options_text})"), color_mode)
+            .context("failed to print input prompt")?;
+    } else {
+        printc(format!("{prompt} (default: {default})"), color_mode)
+            .context("failed to print input prompt")?;
+    }
+
+    loop {
+        let selection = input(Some("> ")).context("failed to read input")?;
+        let selection = if selection.is_empty() {
+            default.to_owned()
+        } else {
+            selection.to_lowercase()
+        };
+
+        if let Some(selected) = find_selection(&selection, options) {
+            println!();
+
+            return Ok(selected);
+        } else {
+            let options_text = options.iter().map(AsRef::as_ref).join("|");
+            println!("Invalid selection! {selection} is not one of {options_text}");
+        }
+    }
+
+    fn find_selection<'a, S>(sel: &str, options: &'a [S]) -> Option<&'a str>
+    where
+        S: AsRef<str>,
+    {
+        if sel.is_empty() {
+            return None;
+        }
+
+        // Find exact match
+        if let Some(selected) = options.iter().find(|&o| o.as_ref().to_lowercase() == sel) {
+            return Some(selected.as_ref());
+        }
+
+        // Find starting abbreviation
+        if let Some(selected) = options
+            .iter()
+            .find(|&o| o.as_ref().to_lowercase().starts_with(sel))
+        {
+            return Some(selected.as_ref());
+        }
+
+        None
     }
 }
 
@@ -644,9 +731,9 @@ where
         .map(|line| line.graphemes(true).count())
         .max()
         .expect("line iterator should not be empty");
-    let width: u8 = width.try_into().expect("`width` should fit in `u8`");
+    let width = u8::try_from(width).expect("`width` should fit in `u8`");
     let height = asc.split('\n').count();
-    let height: u8 = height.try_into().expect("`height` should fit in `u8`");
+    let height = u8::try_from(height).expect("`height` should fit in `u8`");
 
     (width, height)
 }

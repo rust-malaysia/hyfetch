@@ -3,7 +3,7 @@ use std::{env, fs};
 
 use indexmap::IndexMap;
 use regex::Regex;
-use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::UnicodeNormalization as _;
 
 #[derive(Debug)]
 struct AsciiDistro {

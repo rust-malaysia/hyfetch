@@ -1,11 +1,11 @@
-use std::io::Write;
+use std::io::Write as _;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::{env, fs, io};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use directories::ProjectDirs;
 #[cfg(windows)]
 use normpath::PathExt as _;
@@ -143,7 +143,6 @@ pub fn process_command_status(status: &ExitStatus) -> Result<()> {
 
 pub(crate) mod index_map_serde {
     use std::fmt;
-    use std::fmt::Display;
     use std::hash::Hash;
     use std::marker::PhantomData;
     use std::str::FromStr;
@@ -156,7 +155,7 @@ pub(crate) mod index_map_serde {
     where
         D: Deserializer<'de>,
         K: Eq + Hash + FromStr,
-        K::Err: Display,
+        K::Err: fmt::Display,
         V: Deserialize<'de>,
     {
         struct KeySeed<K> {
@@ -166,7 +165,7 @@ pub(crate) mod index_map_serde {
         impl<'de, K> DeserializeSeed<'de> for KeySeed<K>
         where
             K: FromStr,
-            K::Err: Display,
+            K::Err: fmt::Display,
         {
             type Value = K;
 
@@ -181,7 +180,7 @@ pub(crate) mod index_map_serde {
         impl<'de, K> Visitor<'de> for KeySeed<K>
         where
             K: FromStr,
-            K::Err: Display,
+            K::Err: fmt::Display,
         {
             type Value = K;
 
@@ -205,7 +204,7 @@ pub(crate) mod index_map_serde {
         impl<'de, K, V> Visitor<'de> for MapVisitor<K, V>
         where
             K: Eq + Hash + FromStr,
-            K::Err: Display,
+            K::Err: fmt::Display,
             V: Deserialize<'de>,
         {
             type Value = IndexMap<K, V>;

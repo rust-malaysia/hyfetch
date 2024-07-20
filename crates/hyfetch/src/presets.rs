@@ -1,15 +1,15 @@
 use std::iter;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use indexmap::IndexSet;
-use palette::num::ClampAssign;
-use palette::{IntoColorMut, LinSrgb, Okhsl, Srgb};
+use palette::num::ClampAssign as _;
+use palette::{IntoColorMut as _, LinSrgb, Okhsl, Srgb};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumCount, EnumString, VariantArray, VariantNames};
 use tracing::debug;
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::UnicodeSegmentation as _;
 
-use crate::color_util::{ForegroundBackground, Lightness, ToAnsiString};
+use crate::color_util::{ForegroundBackground, Lightness, ToAnsiString as _};
 use crate::types::{AnsiMode, TerminalTheme};
 
 #[derive(
@@ -504,7 +504,7 @@ impl ColorProfile {
     /// length.
     pub fn with_length(&self, length: u8) -> Result<Self> {
         let orig_len = self.colors.len();
-        let orig_len: u8 = orig_len.try_into().expect("`orig_len` should fit in `u8`");
+        let orig_len = u8::try_from(orig_len).expect("`orig_len` should fit in `u8`");
         // TODO: I believe weird things can happen because of this...
         // if length < orig_len {
         //     unimplemented!("compressing length of color profile not implemented");
@@ -558,7 +558,7 @@ impl ColorProfile {
 
         let ColorProfile { colors } = {
             let length = txt.len();
-            let length: u8 = length.try_into().expect("`length` should fit in `u8`");
+            let length = u8::try_from(length).expect("`length` should fit in `u8`");
             self.with_length(length)
                 .with_context(|| format!("failed to spread color profile to length {length}"))?
         };
