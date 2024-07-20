@@ -71,6 +71,8 @@ impl ColorAlignment {
     where
         S: AsRef<str>,
     {
+        debug!("recolor ascii");
+
         let reset = color("&~&*", color_mode).expect("color reset should not be invalid");
 
         let asc = match self {
