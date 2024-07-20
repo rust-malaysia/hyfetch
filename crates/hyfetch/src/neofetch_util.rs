@@ -18,7 +18,7 @@ use normpath::PathExt as _;
 #[cfg(windows)]
 use same_file::is_same_file;
 use serde::{Deserialize, Serialize};
-use strum::IntoStaticStr;
+use strum::AsRefStr;
 use tempfile::NamedTempFile;
 use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation;
@@ -37,7 +37,7 @@ pub static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
 
 type ForeBackColorPair = (NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor);
 
-#[derive(Clone, Eq, PartialEq, Debug, Deserialize, IntoStaticStr, Serialize)]
+#[derive(Clone, Eq, PartialEq, Debug, AsRefStr, Deserialize, Serialize)]
 #[serde(tag = "mode")]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
@@ -502,6 +502,68 @@ pub fn ensure_git_bash() -> Result<PathBuf> {
     Ok(git_bash_path)
 }
 
+pub fn fastfetch_path() -> Result<Option<PathBuf>> {
+    let fastfetch_path =
+        find_in_path("fastfetch").context("failed to check existence of `fastfetch` in `PATH`")?;
+    #[cfg(windows)]
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        find_in_path("fastfetch.exe")
+            .context("failed to check existence of `fastfetch.exe` in `PATH`")?
+    };
+
+    // Fall back to `fastfetch` in directory of current executable
+    let current_exe_path: PathBuf = env::current_exe()
+        .and_then(|p| {
+            #[cfg(not(windows))]
+            {
+                p.canonicalize()
+            }
+            #[cfg(windows)]
+            {
+                p.normalize().map(|p| p.into())
+            }
+        })
+        .context("failed to get path of current running executable")?;
+    let current_exe_dir_path = current_exe_path
+        .parent()
+        .expect("parent should not be `None`");
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        let fastfetch_path = current_exe_dir_path.join("fastfetch");
+        find_file(&fastfetch_path)
+            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
+    };
+
+    // Bundled fastfetch
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        let fastfetch_path = current_exe_dir_path.join("fastfetch/usr/bin/fastfetch");
+        find_file(&fastfetch_path)
+            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
+    };
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        let fastfetch_path = current_exe_dir_path.join("fastfetch/fastfetch");
+        find_file(&fastfetch_path)
+            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
+    };
+    #[cfg(windows)]
+    let fastfetch_path = if fastfetch_path.is_some() {
+        fastfetch_path
+    } else {
+        let fastfetch_path = current_exe_dir_path.join(r"fastfetch\fastfetch.exe");
+        find_file(&fastfetch_path)
+            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
+    };
+
+    Ok(fastfetch_path)
+}
+
 /// Gets the distro ascii of the current distro. Or if distro is specified, get
 /// the specific distro's ascii art instead.
 #[tracing::instrument(level = "debug")]
@@ -790,68 +852,6 @@ fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
     process_command_status(&status).context("neofetch command exited with error")?;
 
     Ok(())
-}
-
-fn fastfetch_path() -> Result<Option<PathBuf>> {
-    let fastfetch_path =
-        find_in_path("fastfetch").context("failed to check existence of `fastfetch` in `PATH`")?;
-    #[cfg(windows)]
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        find_in_path("fastfetch.exe")
-            .context("failed to check existence of `fastfetch.exe` in `PATH`")?
-    };
-
-    // Fall back to `fastfetch` in directory of current executable
-    let current_exe_path: PathBuf = env::current_exe()
-        .and_then(|p| {
-            #[cfg(not(windows))]
-            {
-                p.canonicalize()
-            }
-            #[cfg(windows)]
-            {
-                p.normalize().map(|p| p.into())
-            }
-        })
-        .context("failed to get path of current running executable")?;
-    let current_exe_dir_path = current_exe_path
-        .parent()
-        .expect("parent should not be `None`");
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        let fastfetch_path = current_exe_dir_path.join("fastfetch");
-        find_file(&fastfetch_path)
-            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
-    };
-
-    // Bundled fastfetch
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        let fastfetch_path = current_exe_dir_path.join("fastfetch/usr/bin/fastfetch");
-        find_file(&fastfetch_path)
-            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
-    };
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        let fastfetch_path = current_exe_dir_path.join("fastfetch/fastfetch");
-        find_file(&fastfetch_path)
-            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
-    };
-    #[cfg(windows)]
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        let fastfetch_path = current_exe_dir_path.join(r"fastfetch\fastfetch.exe");
-        find_file(&fastfetch_path)
-            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
-    };
-
-    Ok(fastfetch_path)
 }
 
 /// Runs fastfetch with colors.

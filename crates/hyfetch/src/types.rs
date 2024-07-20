@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
-use strum::{EnumString, IntoStaticStr, VariantNames};
+use strum::{AsRefStr, EnumString, VariantNames};
 
-#[derive(
-    Copy, Clone, Eq, PartialEq, Hash, Debug, Deserialize, EnumString, IntoStaticStr, Serialize,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, AsRefStr, Deserialize, EnumString, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum AnsiMode {
@@ -19,7 +17,17 @@ pub enum AnsiMode {
 }
 
 #[derive(
-    Copy, Clone, Eq, PartialEq, Hash, Debug, Deserialize, EnumString, IntoStaticStr, Serialize,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    AsRefStr,
+    Deserialize,
+    EnumString,
+    Serialize,
+    VariantNames,
 )]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
@@ -29,15 +37,25 @@ pub enum TerminalTheme {
 }
 
 #[derive(
-    Copy, Clone, Eq, PartialEq, Hash, Debug, Deserialize, EnumString, Serialize, VariantNames,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    AsRefStr,
+    Deserialize,
+    EnumString,
+    Serialize,
+    VariantNames,
 )]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum Backend {
-    Qwqfetch,
     Neofetch,
     Fastfetch,
     FastfetchOld,
+    Qwqfetch,
 }
 
 // See https://github.com/Peternator7/strum/issues/244
