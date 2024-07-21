@@ -6,3 +6,4 @@ pub mod neofetch_util;
 pub mod presets;
 pub mod types;
 pub mod utils;
+pub mod pride_month;

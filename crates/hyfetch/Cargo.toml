@@ -15,6 +15,7 @@ ansi_colours = { workspace = true, features = [] }
 anstream = { workspace = true, features = [], optional = true }
 anyhow = { workspace = true, features = ["std"] }
 bpaf = { workspace = true, features = [] }
+clearscreen = "3.0.0"
 deranged = { workspace = true, features = ["serde", "std"] }
 directories = { workspace = true, features = [] }
 enterpolation = { workspace = true, features = ["bspline", "std"] }
@@ -29,6 +30,7 @@ shell-words = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive", "std"] }
 supports-color = { workspace = true, features = [] }
 tempfile = { workspace = true, features = [] }
+term_size = "0.3.2"
 terminal-colorsaurus = { workspace = true, features = [] }
 terminal_size = { workspace = true, features = [] }
 thiserror = { workspace = true, features = [] }
