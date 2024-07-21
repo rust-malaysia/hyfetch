@@ -26,6 +26,8 @@ use crate::color_util::{
     clear_screen, color, printc, ContrastGrayscale as _, ForegroundBackground, Lightness,
     NeofetchAsciiIndexedColor, PresetIndexedColor, Theme as _, ToAnsiString as _,
 };
+#[cfg(feature = "macchina")]
+use crate::neofetch_util::macchina_path;
 use crate::neofetch_util::{
     ascii_size, fastfetch_path, get_distro_ascii, literal_input, ColorAlignment,
     NEOFETCH_COLORS_AC, NEOFETCH_COLOR_PATTERNS,
@@ -809,8 +811,9 @@ impl Config {
             // Check if fastfetch is installed
             let fastfetch_path = fastfetch_path().context("failed to get fastfetch path")?;
 
-            // Check if qwqfetch is installed
-            // TODO: qwqfetch
+            // Check if macchina is installed
+            #[cfg(feature = "macchina")]
+            let macchina_path = macchina_path().context("failed to get macchina path")?;
 
             printc(
                 "- &bneofetch&r: Written in bash, &nbest compatibility&r on Unix systems",
@@ -827,7 +830,18 @@ impl Config {
                 color_mode,
             )
             .expect("message should not contain invalid color codes");
-            // TODO: qwqfetch
+            #[cfg(feature = "macchina")]
+            printc(
+                format!(
+                    "- &bmacchina&r: Written in Rust, &nbest performance&r \
+                     {installed_not_installed}",
+                    installed_not_installed = macchina_path
+                        .map(|path| format!("&a(Installed at {path})", path = path.display()))
+                        .unwrap_or_else(|| "&c(Not installed)".to_owned())
+                ),
+                color_mode,
+            )
+            .expect("message should not contain invalid color codes");
             println!();
 
             let choice = literal_input(

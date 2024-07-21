@@ -55,7 +55,8 @@ pub enum Backend {
     Neofetch,
     Fastfetch,
     FastfetchOld,
-    Qwqfetch,
+    #[cfg(feature = "macchina")]
+    Macchina,
 }
 
 // See https://github.com/Peternator7/strum/issues/244

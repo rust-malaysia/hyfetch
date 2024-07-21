@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
+#[cfg(feature = "macchina")]
+use std::fs;
 #[cfg(windows)]
 use std::io;
 use std::io::Write as _;
@@ -19,7 +21,8 @@ use normpath::PathExt as _;
 use same_file::is_same_file;
 use serde::{Deserialize, Serialize};
 use strum::AsRefStr;
-use tempfile::NamedTempFile;
+#[cfg(feature = "macchina")]
+use toml_edit::{value, DocumentMut, Item, Table};
 use tracing::debug;
 use unicode_segmentation::UnicodeSegmentation as _;
 
@@ -437,7 +440,9 @@ where
     }
 }
 
-/// Gets the absolute path of the neofetch command.
+/// Gets the absolute path of the [neofetch] command.
+///
+/// [neofetch]: https://github.com/hykilpikonna/hyfetch#running-updated-original-neofetch
 pub fn neofetch_path() -> Result<Option<PathBuf>> {
     if let Some(workspace_dir) = env::var_os("CARGO_WORKSPACE_DIR") {
         debug!(
@@ -466,191 +471,97 @@ pub fn neofetch_path() -> Result<Option<PathBuf>> {
         .context("failed to check existence of `neowofetch` in `PATH`")?;
 
     // Fall back to `neowofetch` in directory of current executable
-    let neowofetch_path = if neowofetch_path.is_some() {
-        neowofetch_path
-    } else {
-        let current_exe_path: PathBuf = env::current_exe()
-            .and_then(|p| {
-                #[cfg(not(windows))]
-                {
-                    p.canonicalize()
-                }
-                #[cfg(windows)]
-                {
-                    p.normalize().map(|p| p.into())
-                }
-            })
-            .context("failed to get path of current running executable")?;
-        let neowofetch_path = current_exe_path
-            .parent()
-            .expect("parent should not be `None`")
-            .join("neowofetch");
-        find_file(&neowofetch_path)
-            .with_context(|| format!("failed to check existence of file {neowofetch_path:?}"))?
-    };
+    #[cfg(windows)]
+    let neowofetch_path = neowofetch_path.map_or_else(
+        || {
+            let current_exe_path: PathBuf = env::current_exe()
+                .and_then(|p| p.normalize().map(|p| p.into()))
+                .context("failed to get path of current running executable")?;
+            let neowofetch_path = current_exe_path
+                .parent()
+                .expect("parent should not be `None`")
+                .join("neowofetch");
+            find_file(&neowofetch_path)
+                .with_context(|| format!("failed to check existence of file {neowofetch_path:?}"))
+        },
+        |path| Ok(Some(path)),
+    )?;
 
     Ok(neowofetch_path)
 }
 
-/// Ensures git bash installation for Windows.
+/// Gets the absolute path of the [fastfetch] command.
 ///
-/// Returns the path to git bash.
-#[cfg(windows)]
-pub fn ensure_git_bash() -> Result<PathBuf> {
-    // Find `bash.exe` in `PATH`, but exclude the known bad paths
-    let git_bash_path = {
-        let bash_path = find_in_path("bash.exe")
-            .context("failed to check existence of `bash.exe` in `PATH`")?;
-        match bash_path {
-            Some(bash_path) if bash_path.ends_with(r"Git\usr\bin\bash.exe") => {
-                // See https://stackoverflow.com/a/58418686/1529493
-                None
-            },
-            Some(bash_path) => {
-                // See https://github.com/hykilpikonna/hyfetch/issues/233
-                let windir = env::var_os("windir")
-                    .context("`windir` environment variable is not set or invalid")?;
-                match is_same_file(&bash_path, Path::new(&windir).join(r"System32\bash.exe")) {
-                    Ok(true) => None,
-                    Ok(false) => Some(bash_path),
-                    Err(err) if err.kind() == io::ErrorKind::NotFound => Some(bash_path),
-                    Err(err) => {
-                        return Err(err).context("failed to check if paths refer to the same file");
-                    },
-                }
-            },
-            _ => bash_path,
-        }
-    };
-
-    // Detect any Git for Windows installation in `PATH`
-    let git_bash_path = if git_bash_path.is_some() {
-        git_bash_path
-    } else {
-        let git_path =
-            find_in_path("git.exe").context("failed to check existence of `git.exe` in `PATH`")?;
-        match git_path {
-            Some(git_path) if git_path.ends_with(r"Git\cmd\git.exe") => {
-                let bash_path = git_path
-                    .parent()
-                    .expect("parent should not be `None`")
-                    .parent()
-                    .expect("parent should not be `None`")
-                    .join(r"bin\bash.exe");
-                if bash_path.is_file() {
-                    Some(bash_path)
-                } else {
-                    None
-                }
-            },
-            _ => None,
-        }
-    };
-
-    // Fall back to default Git for Windows installation paths
-    let git_bash_path = git_bash_path
-        .or_else(|| {
-            let program_files_dir = env::var_os("ProgramFiles")?;
-            let bash_path = Path::new(&program_files_dir).join(r"Git\bin\bash.exe");
-            if bash_path.is_file() {
-                Some(bash_path)
-            } else {
-                None
-            }
-        })
-        .or_else(|| {
-            let program_files_x86_dir = env::var_os("ProgramFiles(x86)")?;
-            let bash_path = Path::new(&program_files_x86_dir).join(r"Git\bin\bash.exe");
-            if bash_path.is_file() {
-                Some(bash_path)
-            } else {
-                None
-            }
-        });
-
-    // Bundled git bash
-    let git_bash_path = if git_bash_path.is_some() {
-        git_bash_path
-    } else {
-        let current_exe_path: PathBuf = env::current_exe()
-            .and_then(|p| p.normalize().map(|p| p.into()))
-            .context("failed to get path of current running executable")?;
-        let bash_path = current_exe_path
-            .parent()
-            .expect("parent should not be `None`")
-            .join(r"git\bin\bash.exe");
-        if bash_path.is_file() {
-            Some(bash_path)
-        } else {
-            None
-        }
-    };
-
-    let git_bash_path = git_bash_path.context("failed to find git bash executable")?;
-
-    Ok(git_bash_path)
-}
-
+/// [fastfetch]: https://github.com/fastfetch-cli/fastfetch
 pub fn fastfetch_path() -> Result<Option<PathBuf>> {
-    let fastfetch_path =
-        find_in_path("fastfetch").context("failed to check existence of `fastfetch` in `PATH`")?;
-    #[cfg(windows)]
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        find_in_path("fastfetch.exe")
-            .context("failed to check existence of `fastfetch.exe` in `PATH`")?
+    let fastfetch_path = {
+        #[cfg(not(windows))]
+        {
+            find_in_path("fastfetch")
+                .context("failed to check existence of `fastfetch` in `PATH`")?
+        }
+        #[cfg(windows)]
+        {
+            find_in_path("fastfetch.exe")
+                .context("failed to check existence of `fastfetch.exe` in `PATH`")?
+        }
     };
 
-    // Fall back to `fastfetch` in directory of current executable
-    let current_exe_path: PathBuf = env::current_exe()
-        .and_then(|p| {
-            #[cfg(not(windows))]
-            {
-                p.canonicalize()
-            }
-            #[cfg(windows)]
-            {
-                p.normalize().map(|p| p.into())
-            }
-        })
-        .context("failed to get path of current running executable")?;
-    let current_exe_dir_path = current_exe_path
-        .parent()
-        .expect("parent should not be `None`");
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        let fastfetch_path = current_exe_dir_path.join("fastfetch");
-        find_file(&fastfetch_path)
-            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
-    };
-
-    // Bundled fastfetch
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        let fastfetch_path = current_exe_dir_path.join("fastfetch/usr/bin/fastfetch");
-        find_file(&fastfetch_path)
-            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
-    };
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        let fastfetch_path = current_exe_dir_path.join("fastfetch/fastfetch");
-        find_file(&fastfetch_path)
-            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
-    };
+    // Fall back to `fastfetch/fastfetch.exe` in directory of current executable
     #[cfg(windows)]
-    let fastfetch_path = if fastfetch_path.is_some() {
-        fastfetch_path
-    } else {
-        let fastfetch_path = current_exe_dir_path.join(r"fastfetch\fastfetch.exe");
-        find_file(&fastfetch_path)
-            .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))?
-    };
+    let fastfetch_path = fastfetch_path.map_or_else(
+        || {
+            let current_exe_path: PathBuf = env::current_exe()
+                .and_then(|p| p.normalize().map(|p| p.into()))
+                .context("failed to get path of current running executable")?;
+            let current_exe_dir_path = current_exe_path
+                .parent()
+                .expect("parent should not be `None`");
+            let fastfetch_path = current_exe_dir_path.join("fastfetch/fastfetch.exe");
+            find_file(&fastfetch_path)
+                .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))
+        },
+        |path| Ok(Some(path)),
+    )?;
 
     Ok(fastfetch_path)
+}
+
+/// Gets the absolute path of the [macchina] command.
+///
+/// [macchina]: https://github.com/Macchina-CLI/macchina
+#[cfg(feature = "macchina")]
+pub fn macchina_path() -> Result<Option<PathBuf>> {
+    let macchina_path = {
+        #[cfg(not(windows))]
+        {
+            find_in_path("macchina").context("failed to check existence of `macchina` in `PATH`")?
+        }
+        #[cfg(windows)]
+        {
+            find_in_path("macchina.exe")
+                .context("failed to check existence of `macchina.exe` in `PATH`")?
+        }
+    };
+
+    // Fall back to `macchina.exe` in directory of current executable
+    #[cfg(windows)]
+    let macchina_path = macchina_path.map_or_else(
+        || {
+            let current_exe_path: PathBuf = env::current_exe()
+                .and_then(|p| p.normalize().map(|p| p.into()))
+                .context("failed to get path of current running executable")?;
+            let current_exe_dir_path = current_exe_path
+                .parent()
+                .expect("parent should not be `None`");
+            let macchina_path = current_exe_dir_path.join("macchina.exe");
+            find_file(&macchina_path)
+                .with_context(|| format!("failed to check existence of file {macchina_path:?}"))
+        },
+        |path| Ok(Some(path)),
+    )?;
+
+    Ok(macchina_path)
 }
 
 /// Gets the distro ascii of the current distro. Or if distro is specified, get
@@ -705,8 +616,9 @@ pub fn run(asc: String, backend: Backend, args: Option<&Vec<String>>) -> Result<
         Backend::FastfetchOld => {
             run_fastfetch(asc, args, true).context("failed to run fastfetch")?;
         },
-        Backend::Qwqfetch => {
-            todo!();
+        #[cfg(feature = "macchina")]
+        Backend::Macchina => {
+            run_macchina(asc, args).context("failed to run macchina")?;
         },
     }
 
@@ -801,6 +713,106 @@ where
         .join("\n"))
 }
 
+/// Ensures git bash installation for Windows.
+///
+/// Returns the path of git bash.
+#[cfg(windows)]
+fn ensure_git_bash() -> Result<PathBuf> {
+    // Find `bash.exe` in `PATH`, but exclude the known bad paths
+    let git_bash_path = find_in_path("bash.exe")
+        .context("failed to check existence of `bash.exe` in `PATH`")?
+        .map_or_else(
+            || Ok(None),
+            |bash_path| {
+                if bash_path.ends_with(r"Git\usr\bin\bash.exe") {
+                    // See https://stackoverflow.com/a/58418686/1529493
+                    Ok(None)
+                } else {
+                    // See https://github.com/hykilpikonna/hyfetch/issues/233
+                    let windir = env::var_os("windir")
+                        .context("`windir` environment variable is not set or invalid")?;
+                    match is_same_file(&bash_path, Path::new(&windir).join(r"System32\bash.exe")) {
+                        Ok(true) => Ok(None),
+                        Ok(false) => Ok(Some(bash_path)),
+                        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Some(bash_path)),
+                        Err(err) => {
+                            Err(err).context("failed to check if paths refer to the same file")
+                        },
+                    }
+                }
+            },
+        )?;
+
+    // Detect any Git for Windows installation in `PATH`
+    let git_bash_path = git_bash_path.map_or_else(
+        || {
+            let git_path = find_in_path("git.exe")
+                .context("failed to check existence of `git.exe` in `PATH`")?;
+            match git_path {
+                Some(git_path) if git_path.ends_with(r"Git\cmd\git.exe") => {
+                    let bash_path = git_path
+                        .parent()
+                        .expect("parent should not be `None`")
+                        .parent()
+                        .expect("parent should not be `None`")
+                        .join(r"bin\bash.exe");
+                    if bash_path.is_file() {
+                        Ok(Some(bash_path))
+                    } else {
+                        Ok(None)
+                    }
+                },
+                _ => Ok(None),
+            }
+        },
+        |path| Ok(Some(path)),
+    )?;
+
+    // Fall back to default Git for Windows installation paths
+    let git_bash_path = git_bash_path
+        .or_else(|| {
+            let program_files_dir = env::var_os("ProgramFiles")?;
+            let bash_path = Path::new(&program_files_dir).join(r"Git\bin\bash.exe");
+            if bash_path.is_file() {
+                Some(bash_path)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            let program_files_x86_dir = env::var_os("ProgramFiles(x86)")?;
+            let bash_path = Path::new(&program_files_x86_dir).join(r"Git\bin\bash.exe");
+            if bash_path.is_file() {
+                Some(bash_path)
+            } else {
+                None
+            }
+        });
+
+    // Bundled git bash
+    let git_bash_path = git_bash_path.map_or_else(
+        || {
+            let current_exe_path: PathBuf = env::current_exe()
+                .and_then(|p| p.normalize().map(|p| p.into()))
+                .context("failed to get path of current running executable")?;
+            let bash_path = current_exe_path
+                .parent()
+                .expect("parent should not be `None`")
+                .join(r"git\bin\bash.exe");
+            if bash_path.is_file() {
+                Ok(Some(bash_path))
+            } else {
+                Ok(None)
+            }
+        },
+        |path| Ok(Some(path)),
+    )?;
+
+    let git_bash_path = git_bash_path.context("failed to find git bash executable")?;
+
+    Ok(git_bash_path)
+}
+
 /// Runs neofetch command, returning the piped stdout output.
 fn run_neofetch_command_piped<S>(args: &[S]) -> Result<String>
 where
@@ -825,8 +837,10 @@ fn make_neofetch_command<S>(args: &[S]) -> Result<Command>
 where
     S: AsRef<OsStr>,
 {
-    let neofetch_path = neofetch_path().context("failed to get neofetch path")?;
-    let neofetch_path = neofetch_path.context("neofetch command not found")?;
+    // Find neofetch script
+    let neofetch_path = neofetch_path()
+        .context("failed to get neofetch path")?
+        .context("neofetch command not found")?;
 
     debug!(?neofetch_path, "neofetch path");
 
@@ -871,13 +885,52 @@ fn make_fastfetch_command<S>(args: &[S]) -> Result<Command>
 where
     S: AsRef<OsStr>,
 {
-    // Find fastfetch binary
-    let fastfetch_path = fastfetch_path().context("failed to get fastfetch path")?;
-    let fastfetch_path = fastfetch_path.context("fastfetch command not found")?;
+    // Find fastfetch executable
+    let fastfetch_path = fastfetch_path()
+        .context("failed to get fastfetch path")?
+        .context("fastfetch command not found")?;
 
     debug!(?fastfetch_path, "fastfetch path");
 
     let mut command = Command::new(fastfetch_path);
+    command.args(args);
+    Ok(command)
+}
+
+/// Runs macchina command, returning the piped stdout output.
+#[cfg(feature = "macchina")]
+fn run_macchina_command_piped<S>(args: &[S]) -> Result<String>
+where
+    S: AsRef<OsStr> + fmt::Debug,
+{
+    let mut command = make_macchina_command(args)?;
+
+    let output = command
+        .output()
+        .context("failed to execute macchina as child process")?;
+    debug!(?output, "macchina output");
+    process_command_status(&output.status).context("macchina command exited with error")?;
+
+    let out = String::from_utf8(output.stdout)
+        .context("failed to process macchina output as it contains invalid UTF-8")?
+        .trim()
+        .to_owned();
+    Ok(out)
+}
+
+#[cfg(feature = "macchina")]
+fn make_macchina_command<S>(args: &[S]) -> Result<Command>
+where
+    S: AsRef<OsStr>,
+{
+    // Find macchina executable
+    let macchina_path = macchina_path()
+        .context("failed to get macchina path")?
+        .context("macchina command not found")?;
+
+    debug!(?macchina_path, "macchina path");
+
+    let mut command = Command::new(macchina_path);
     command.args(args);
     Ok(command)
 }
@@ -897,34 +950,104 @@ fn get_distro_name(backend: Backend) -> Result<String> {
             " ",
         ])
         .context("failed to get distro name from fastfetch"),
-        Backend::Qwqfetch => {
-            todo!()
+        #[cfg(feature = "macchina")]
+        Backend::Macchina => {
+            // Write ascii art to temp file
+            let asc_file_path = {
+                let mut temp_file = tempfile::Builder::new()
+                    .suffix("ascii.txt")
+                    .tempfile()
+                    .context("failed to create temp file for ascii art")?;
+                temp_file
+                    .write_all(b"\t\n\t\n")
+                    .context("failed to write ascii art to temp file")?;
+                temp_file.into_temp_path()
+            };
+
+            // Write macchina theme to temp file
+            let theme_file_path = {
+                let project_dirs = directories::ProjectDirs::from("", "", "macchina")
+                    .context("failed to get base dirs")?;
+                let themes_path = project_dirs.config_dir().join("themes");
+                fs::create_dir_all(&themes_path).with_context(|| {
+                    format!("failed to create macchina themes dir {themes_path:?}")
+                })?;
+                let mut temp_file = tempfile::Builder::new()
+                    .suffix("theme.toml")
+                    .tempfile_in(themes_path)
+                    .context("failed to create temp file for macchina theme")?;
+                let theme_doc = {
+                    let mut doc = DocumentMut::new();
+                    doc["spacing"] = value(0);
+                    doc["padding"] = value(0);
+                    // See https://github.com/Macchina-CLI/macchina/issues/319
+                    // doc["hide_ascii"] = value(true);
+                    doc["separator"] = value("");
+                    doc["custom_ascii"] = Item::Table(Table::from_iter([(
+                        "path",
+                        &*asc_file_path.to_string_lossy(),
+                    )]));
+                    doc["keys"] = Item::Table(Table::from_iter([("os", ""), ("distro", "")]));
+                    doc
+                };
+                debug!(%theme_doc, "macchina theme");
+                temp_file
+                    .write_all(theme_doc.to_string().as_bytes())
+                    .context("failed to write macchina theme to temp file")?;
+                temp_file.into_temp_path()
+            };
+
+            let args: [&OsStr; 4] = [
+                "--show".as_ref(),
+                if cfg!(target_os = "linux") {
+                    "distribution"
+                } else {
+                    "operating-system"
+                }
+                .as_ref(),
+                "--theme".as_ref(),
+                theme_file_path
+                    .file_stem()
+                    .expect("file name should not be `None`"),
+            ];
+            run_macchina_command_piped(&args[..])
+                .map(|s| {
+                    anstream::adapter::strip_str(&s)
+                        .to_string()
+                        .trim()
+                        .to_owned()
+                })
+                .context("failed to get distro name from macchina")
         },
     }
 }
 
-/// Runs neofetch with colors.
+/// Runs neofetch with custom ascii art.
 #[tracing::instrument(level = "debug", skip(asc))]
 fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
     // Escape backslashes here because backslashes are escaped in neofetch for
     // printf
     let asc = asc.replace('\\', r"\\");
 
-    // Write temp file
-    let mut temp_file =
-        NamedTempFile::with_prefix("ascii.txt").context("failed to create temp file for ascii")?;
-    temp_file
-        .write_all(asc.as_bytes())
-        .context("failed to write ascii to temp file")?;
+    // Write ascii art to temp file
+    let asc_file_path = {
+        let mut temp_file = tempfile::Builder::new()
+            .suffix("ascii.txt")
+            .tempfile()
+            .context("failed to create temp file for ascii art")?;
+        temp_file
+            .write_all(asc.as_bytes())
+            .context("failed to write ascii art to temp file")?;
+        temp_file.into_temp_path()
+    };
 
-    // Call neofetch with the temp file
-    let temp_file_path = temp_file.into_temp_path();
+    // Call neofetch
     let args = {
         let mut v: Vec<Cow<OsStr>> = vec![
             OsStr::new("--ascii").into(),
             OsStr::new("--source").into(),
-            OsStr::new(&temp_file_path).into(),
-            OsStr::new("--ascii-colors").into(),
+            OsStr::new(&asc_file_path).into(),
+            OsStr::new("--ascii_colors").into(),
         ];
         if let Some(args) = args {
             v.extend(args.iter().map(|arg| OsStr::new(arg).into()));
@@ -943,22 +1066,26 @@ fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
     Ok(())
 }
 
-/// Runs fastfetch with colors.
+/// Runs fastfetch with custom ascii art.
 #[tracing::instrument(level = "debug", skip(asc))]
 fn run_fastfetch(asc: String, args: Option<&Vec<String>>, legacy: bool) -> Result<()> {
-    // Write temp file
-    let mut temp_file =
-        NamedTempFile::with_prefix("ascii.txt").context("failed to create temp file for ascii")?;
-    temp_file
-        .write_all(asc.as_bytes())
-        .context("failed to write ascii to temp file")?;
+    // Write ascii art to temp file
+    let asc_file_path = {
+        let mut temp_file = tempfile::Builder::new()
+            .suffix("ascii.txt")
+            .tempfile()
+            .context("failed to create temp file for ascii art")?;
+        temp_file
+            .write_all(asc.as_bytes())
+            .context("failed to write ascii art to temp file")?;
+        temp_file.into_temp_path()
+    };
 
-    // Call fastfetch with the temp file
-    let temp_file_path = temp_file.into_temp_path();
+    // Call fastfetch
     let args = {
         let mut v: Vec<Cow<OsStr>> = vec![
             OsStr::new(if legacy { "--raw" } else { "--file-raw" }).into(),
-            OsStr::new(&temp_file_path).into(),
+            OsStr::new(&asc_file_path).into(),
         ];
         if let Some(args) = args {
             v.extend(args.iter().map(|arg| OsStr::new(arg).into()));
@@ -979,6 +1106,73 @@ fn run_fastfetch(asc: String, args: Option<&Vec<String>>, legacy: bool) -> Resul
         );
     }
     process_command_status(&status).context("fastfetch command exited with error")?;
+
+    Ok(())
+}
+
+/// Runs macchina with custom ascii art.
+#[cfg(feature = "macchina")]
+#[tracing::instrument(level = "debug", skip(asc))]
+fn run_macchina(asc: String, args: Option<&Vec<String>>) -> Result<()> {
+    // Write ascii art to temp file
+    let asc_file_path = {
+        let mut temp_file = tempfile::Builder::new()
+            .suffix("ascii.txt")
+            .tempfile()
+            .context("failed to create temp file for ascii art")?;
+        temp_file
+            .write_all(asc.as_bytes())
+            .context("failed to write ascii art to temp file")?;
+        temp_file.into_temp_path()
+    };
+
+    // Write macchina theme to temp file
+    let theme_file_path = {
+        let project_dirs = directories::ProjectDirs::from("", "", "macchina")
+            .context("failed to get base dirs")?;
+        let themes_path = project_dirs.config_dir().join("themes");
+        fs::create_dir_all(&themes_path)
+            .with_context(|| format!("failed to create macchina themes dir {themes_path:?}"))?;
+        let mut temp_file = tempfile::Builder::new()
+            .suffix("theme.toml")
+            .tempfile_in(themes_path)
+            .context("failed to create temp file for macchina theme")?;
+        let theme_doc = {
+            let mut doc = DocumentMut::new();
+            doc["custom_ascii"] = Item::Table(Table::from_iter([(
+                "path",
+                &*asc_file_path.to_string_lossy(),
+            )]));
+            doc
+        };
+        debug!(%theme_doc, "macchina theme");
+        temp_file
+            .write_all(theme_doc.to_string().as_bytes())
+            .context("failed to write macchina theme to temp file")?;
+        temp_file.into_temp_path()
+    };
+
+    let args = {
+        let mut v: Vec<Cow<OsStr>> = vec![
+            OsStr::new("--theme").into(),
+            theme_file_path
+                .file_stem()
+                .expect("file name should not be `None`")
+                .into(),
+        ];
+        if let Some(args) = args {
+            v.extend(args.iter().map(|arg| OsStr::new(arg).into()));
+        }
+        v
+    };
+    let mut command = make_macchina_command(&args[..])?;
+
+    debug!(?command, "macchina command");
+
+    let status = command
+        .status()
+        .context("failed to execute macchina command as child process")?;
+    process_command_status(&status).context("macchina command exited with error")?;
 
     Ok(())
 }

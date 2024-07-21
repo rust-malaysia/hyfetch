@@ -4,8 +4,6 @@ use std::io::{self, IsTerminal as _};
 use anyhow::{Context as _, Result};
 use hyfetch::cli_options::options;
 use hyfetch::models::Config;
-#[cfg(windows)]
-use hyfetch::neofetch_util::ensure_git_bash;
 use hyfetch::neofetch_util::{self, get_distro_ascii, ColorAlignment};
 use hyfetch::presets::AssignLightness;
 use hyfetch::types::Backend;
@@ -32,9 +30,6 @@ fn main() -> Result<()> {
 
     let backend = options.backend.unwrap_or(Backend::Neofetch);
     let use_overlay = options.overlay;
-
-    #[cfg(windows)]
-    ensure_git_bash().context("failed to find git bash")?;
 
     if options.test_print {
         let (asc, _) = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;

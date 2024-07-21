@@ -56,7 +56,7 @@ pub fn options() -> OptionParser<Options> {
 PRESET={{{presets}}}",
             presets = Preset::VARIANTS.join(",")
         ))
-        .argument("PRESET");
+        .argument::<String>("PRESET");
     #[cfg(feature = "autocomplete")]
     let preset = preset.complete(complete_preset);
     let preset = preset
@@ -76,7 +76,7 @@ PRESET={{{presets}}}",
 MODE={{{modes}}}",
             modes = AnsiMode::VARIANTS.join(",")
         ))
-        .argument("MODE");
+        .argument::<String>("MODE");
     #[cfg(feature = "autocomplete")]
     let mode = mode.complete(complete_mode);
     let mode = mode
@@ -96,7 +96,7 @@ MODE={{{modes}}}",
 BACKEND={{{backends}}}",
             backends = Backend::VARIANTS.join(",")
         ))
-        .argument("BACKEND");
+        .argument::<String>("BACKEND");
     #[cfg(feature = "autocomplete")]
     let backend = backend.complete(complete_backend);
     let backend = backend
