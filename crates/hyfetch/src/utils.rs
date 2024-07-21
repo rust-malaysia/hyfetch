@@ -52,7 +52,7 @@ where
 
 /// Finds a command in `PATH`.
 ///
-/// Returns the canonicalized / normalized absolute path to the command.
+/// Returns the canonicalized / normalized absolute path of the command.
 pub fn find_in_path<P>(program: P) -> Result<Option<PathBuf>>
 where
     P: AsRef<Path>,
@@ -80,7 +80,7 @@ where
 
 /// Finds a file.
 ///
-/// Returns the canonicalized / normalized absolute path to the file.
+/// Returns the canonicalized / normalized absolute path of the file.
 pub fn find_file<P>(path: P) -> Result<Option<PathBuf>>
 where
     P: AsRef<Path>,
