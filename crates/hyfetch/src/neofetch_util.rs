@@ -35,6 +35,21 @@ use crate::presets::ColorProfile;
 use crate::types::{AnsiMode, Backend, TerminalTheme};
 use crate::utils::{find_file, find_in_path, input, process_command_status};
 
+pub const TEST_ASCII: &str = r####################"
+### |\___/| ###
+### )     ( ###
+## =\     /= ##
+#### )===( ####
+### /     \ ###
+### |     | ###
+## / {txt} \ ##
+## \       / ##
+_/\_\_   _/_/\_
+|##|  ( (  |##|
+|##|   ) ) |##|
+|##|  (_(  |##|
+"####################;
+
 pub const NEOFETCH_COLOR_PATTERNS: [&str; 6] =
     ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
 pub static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
@@ -511,7 +526,7 @@ pub fn fastfetch_path() -> Result<Option<PathBuf>> {
         }
     };
 
-    // Fall back to `fastfetch/fastfetch.exe` in directory of current executable
+    // Fall back to `fastfetch\fastfetch.exe` in directory of current executable
     #[cfg(windows)]
     let fastfetch_path = fastfetch_path.map_or_else(
         || {
@@ -521,7 +536,7 @@ pub fn fastfetch_path() -> Result<Option<PathBuf>> {
             let current_exe_dir_path = current_exe_path
                 .parent()
                 .expect("parent should not be `None`");
-            let fastfetch_path = current_exe_dir_path.join("fastfetch/fastfetch.exe");
+            let fastfetch_path = current_exe_dir_path.join(r"fastfetch\fastfetch.exe");
             find_file(&fastfetch_path)
                 .with_context(|| format!("failed to check existence of file {fastfetch_path:?}"))
         },
@@ -714,13 +729,11 @@ where
         .join("\n"))
 }
 
-/// Ensures git bash installation for Windows.
-///
-/// Returns the path of git bash.
+/// Gets the absolute path of the bash command.
 #[cfg(windows)]
-fn ensure_git_bash() -> Result<PathBuf> {
+fn bash_path() -> Result<PathBuf> {
     // Find `bash.exe` in `PATH`, but exclude the known bad paths
-    let git_bash_path = find_in_path("bash.exe")
+    let bash_path = find_in_path("bash.exe")
         .context("failed to check existence of `bash.exe` in `PATH`")?
         .map_or_else(
             || Ok(None),
@@ -745,7 +758,7 @@ fn ensure_git_bash() -> Result<PathBuf> {
         )?;
 
     // Detect any Git for Windows installation in `PATH`
-    let git_bash_path = git_bash_path.map_or_else(
+    let bash_path = bash_path.map_or_else(
         || {
             let git_path = find_in_path("git.exe")
                 .context("failed to check existence of `git.exe` in `PATH`")?;
@@ -770,7 +783,7 @@ fn ensure_git_bash() -> Result<PathBuf> {
     )?;
 
     // Fall back to default Git for Windows installation paths
-    let git_bash_path = git_bash_path
+    let bash_path = bash_path
         .or_else(|| {
             let program_files_dir = env::var_os("ProgramFiles")?;
             let bash_path = Path::new(&program_files_dir).join(r"Git\bin\bash.exe");
@@ -791,7 +804,7 @@ fn ensure_git_bash() -> Result<PathBuf> {
         });
 
     // Bundled git bash
-    let git_bash_path = git_bash_path.map_or_else(
+    let bash_path = bash_path.map_or_else(
         || {
             let current_exe_path: PathBuf = env::current_exe()
                 .and_then(|p| p.normalize().map(|p| p.into()))
@@ -809,9 +822,9 @@ fn ensure_git_bash() -> Result<PathBuf> {
         |path| Ok(Some(path)),
     )?;
 
-    let git_bash_path = git_bash_path.context("failed to find git bash executable")?;
+    let bash_path = bash_path.context("bash command not found")?;
 
-    Ok(git_bash_path)
+    Ok(bash_path)
 }
 
 /// Runs neofetch command, returning the piped stdout output.
@@ -854,8 +867,8 @@ where
     }
     #[cfg(windows)]
     {
-        let git_bash_path = ensure_git_bash().context("failed to get git bash path")?;
-        let mut command = Command::new(git_bash_path);
+        let bash_path = bash_path().context("failed to get bash path")?;
+        let mut command = Command::new(bash_path);
         command.arg(neofetch_path);
         command.args(args);
         Ok(command)
