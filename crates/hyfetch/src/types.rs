@@ -54,7 +54,6 @@ pub enum TerminalTheme {
 pub enum Backend {
     Neofetch,
     Fastfetch,
-    FastfetchOld,
     #[cfg(feature = "macchina")]
     Macchina,
 }

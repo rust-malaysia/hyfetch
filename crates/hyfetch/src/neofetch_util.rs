@@ -112,8 +112,8 @@ impl ColorAlignment {
                             let line = line.replace(
                                 &format!("${{c{back}}}", back = u8::from(back)),
                                 &colors[i].to_ansi_string(color_mode, {
-                                    // note: this is "background" in the ascii art, but
-                                    // foreground text in terminal
+                                    // This is "background" in the ascii art, but foreground text in
+                                    // terminal
                                     ForegroundBackground::Foreground
                                 }),
                             );
@@ -211,7 +211,11 @@ impl ColorAlignment {
                                         .color_text(
                                             txt,
                                             color_mode,
-                                            ForegroundBackground::Foreground,
+                                            {
+                                                // This is "background" in the ascii art, but
+                                                // foreground text in terminal
+                                                ForegroundBackground::Foreground
+                                            },
                                             false,
                                         )
                                         .context("failed to color text using color profile")?,
@@ -611,10 +615,7 @@ pub fn run(asc: String, backend: Backend, args: Option<&Vec<String>>) -> Result<
             run_neofetch(asc, args).context("failed to run neofetch")?;
         },
         Backend::Fastfetch => {
-            run_fastfetch(asc, args, false).context("failed to run fastfetch")?;
-        },
-        Backend::FastfetchOld => {
-            run_fastfetch(asc, args, true).context("failed to run fastfetch")?;
+            run_fastfetch(asc, args).context("failed to run fastfetch")?;
         },
         #[cfg(feature = "macchina")]
         Backend::Macchina => {
@@ -940,7 +941,7 @@ fn get_distro_name(backend: Backend) -> Result<String> {
     match backend {
         Backend::Neofetch => run_neofetch_command_piped(&["ascii_distro_name"])
             .context("failed to get distro name from neofetch"),
-        Backend::Fastfetch | Backend::FastfetchOld => run_fastfetch_command_piped(&[
+        Backend::Fastfetch => run_fastfetch_command_piped(&[
             "--logo",
             "none",
             "-s",
@@ -1068,7 +1069,7 @@ fn run_neofetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
 
 /// Runs fastfetch with custom ascii art.
 #[tracing::instrument(level = "debug", skip(asc))]
-fn run_fastfetch(asc: String, args: Option<&Vec<String>>, legacy: bool) -> Result<()> {
+fn run_fastfetch(asc: String, args: Option<&Vec<String>>) -> Result<()> {
     // Write ascii art to temp file
     let asc_file_path = {
         let mut temp_file = tempfile::Builder::new()
@@ -1084,7 +1085,7 @@ fn run_fastfetch(asc: String, args: Option<&Vec<String>>, legacy: bool) -> Resul
     // Call fastfetch
     let args = {
         let mut v: Vec<Cow<OsStr>> = vec![
-            OsStr::new(if legacy { "--raw" } else { "--file-raw" }).into(),
+            OsStr::new("--file-raw").into(),
             OsStr::new(&asc_file_path).into(),
         ];
         if let Some(args) = args {
@@ -1099,12 +1100,6 @@ fn run_fastfetch(asc: String, args: Option<&Vec<String>>, legacy: bool) -> Resul
     let status = command
         .status()
         .context("failed to execute fastfetch command as child process")?;
-    if status.code() == Some(144) {
-        eprintln!(
-            "exit code 144 detected; please upgrade fastfetch to >=1.8.0 or use the \
-             'fastfetch-old' backend"
-        );
-    }
     process_command_status(&status).context("fastfetch command exited with error")?;
 
     Ok(())
