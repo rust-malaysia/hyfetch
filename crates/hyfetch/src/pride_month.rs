@@ -25,7 +25,6 @@ const TEXT_ASCII: &str = r"
 
 const NOTICE: &str = "Press enter to continue";
 
-#[allow(clippy::too_many_lines)]
 pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
     let key_pressed = Arc::new(AtomicBool::new(false));
 
@@ -52,26 +51,30 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
 
     let text = &TEXT_ASCII[1..TEXT_ASCII.len() - 1];
     let text_lines: Vec<&str> = text.lines().collect();
-    let text_height: usize = text_lines.len();
-    let text_width: usize = text_lines[0].len();
+    let (text_width, text_height) = {
+        let text_height = text_lines.len();
+        let text_height = u8::try_from(text_height).expect("`text_height` should fit in `u8`");
+        let text_width = text_lines[0].len();
+        let text_width = u8::try_from(text_width).expect("`text_width` should fit in `u8`");
+        (text_width, text_height)
+    };
 
-    let speed = 2;
+    const SPEED: u8 = 2;
     let frame_delay = Duration::from_secs_f32(1.0 / 25.0);
 
     let mut frame: usize = 0;
 
-    let (w, h) = terminal_size()
-        .map(|(Width(w), Height(h))| (usize::from(w), usize::from(h)))
-        .context("failed to get terminal size")?;
-    const BLOCKS: usize = 9;
-    let block_width: usize = w / BLOCKS;
+    let (Width(w), Height(h)) = terminal_size().context("failed to get terminal size")?;
+    const BLOCKS: u8 = 9;
+    let block_width = w / u16::from(BLOCKS);
 
-    let text_start_y = (h / 2) - (text_height / 2);
-    let text_end_y = text_start_y + text_height;
-    let text_start_x = (w / 2) - (text_width / 2);
-    let text_end_x = text_start_x + text_width;
+    let text_start_y = (h / 2) - u16::from(text_height / 2);
+    let text_end_y = text_start_y + u16::from(text_height);
+    let text_start_x = (w / 2) - u16::from(text_width / 2);
+    let text_end_x = text_start_x + u16::from(text_width);
 
-    let notice_start_x = w - NOTICE.len() - 1;
+    let notice_start_x =
+        w - u16::from(u8::try_from(NOTICE.len()).expect("`NOTICE` length should fit in `u8`")) - 1;
     let notice_end_x = w - 1;
     let notice_y = h - 1;
 
@@ -92,26 +95,33 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
         // Loop over the height
         for y in 0..h {
             // Print the starting color
-            buf += &colors[((frame + y) / block_width) % colors.len()]
+            buf += &colors[((frame + usize::from(y)) / usize::from(block_width)) % colors.len()]
                 .to_ansi_string(color_mode, ForegroundBackground::Background);
             buf += &fg.to_ansi_string(color_mode, ForegroundBackground::Foreground);
 
             // Loop over the width
             for x in 0..w {
-                let idx = frame + x + y + (2.0 * (y as f64 + 0.5 * frame as f64).sin()) as usize;
+                let idx = frame
+                    + usize::from(x)
+                    + usize::from(y)
+                    + (2.0 * (y as f64 + 0.5 * frame as f64).sin()) as usize;
                 let y_text = text_start_y <= y && y < text_end_y;
 
-                let border = 1 + usize::from(!(y == text_start_y || y == text_end_y - 1));
+                let border = 1 + if y == text_start_y || y == text_end_y - 1 {
+                    0
+                } else {
+                    1
+                };
 
                 // If it's a switching point
-                if idx % block_width == 0
+                if idx % usize::from(block_width) == 0
                     || x == text_start_x - border
                     || x == text_end_x + border
                     || x == notice_start_x - 1
                     || x == notice_end_x + 1
                 {
                     // Print the color at the current frame
-                    let c = colors[(idx / block_width) % colors.len()];
+                    let c = colors[(idx / usize::from(block_width)) % colors.len()];
                     if (y_text && (text_start_x - border <= x) && (x < text_end_x + border))
                         || (y == notice_y && notice_start_x - 1 <= x && x < notice_end_x + 1)
                     {
@@ -128,13 +138,13 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
                 // If text should be printed, print text
                 if y_text && text_start_x <= x && x < text_end_x {
                     buf.push(
-                        text_lines[y - text_start_y]
+                        text_lines[usize::from(y - text_start_y)]
                             .chars()
-                            .nth(x - text_start_x)
+                            .nth(usize::from(x - text_start_x))
                             .unwrap(),
                     );
                 } else if y == notice_y && notice_start_x <= x && x < notice_end_x {
-                    buf.push(NOTICE.chars().nth(x - notice_start_x).unwrap());
+                    buf.push(NOTICE.chars().nth(usize::from(x - notice_start_x)).unwrap());
                 } else {
                     buf.push(' ');
                 }
@@ -159,7 +169,7 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
         clear_screen(None, color_mode, false).context("failed to clear screen")?;
 
         draw_frame(frame)?;
-        frame += speed;
+        frame += usize::from(SPEED);
         thread::sleep(frame_delay);
 
         // TODO: handle Ctrl+C so that we can clear the screen; but we don't have a nice

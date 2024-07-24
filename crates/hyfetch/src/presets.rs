@@ -639,16 +639,7 @@ impl ColorProfile {
 
     /// Creates a new color profile, with the colors set to the specified
     /// [`Okhsl`] lightness value, adapted to the terminal theme.
-    pub fn with_lightness_adaptive(
-        &self,
-        lightness: Lightness,
-        theme: TerminalTheme,
-        use_overlay: bool,
-    ) -> Self {
-        if use_overlay {
-            todo!()
-        }
-
+    pub fn with_lightness_adaptive(&self, lightness: Lightness, theme: TerminalTheme) -> Self {
         match theme {
             TerminalTheme::Dark => self.with_lightness(AssignLightness::ClampMin(lightness)),
             TerminalTheme::Light => self.with_lightness(AssignLightness::ClampMax(lightness)),

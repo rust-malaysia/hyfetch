@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::path::Path;
 use std::{env, fs};
 
@@ -67,12 +68,14 @@ pub enum Distro {
     .to_owned();
 
     for (variant, AsciiDistro { pattern, .. }) in &variants {
-        buf.push_str(&format!(
+        write!(
+            buf,
             r###"
     // {pattern})
     {variant},
 "###,
-        ));
+        )
+        .unwrap();
     }
 
     buf.push_str(
@@ -134,13 +137,15 @@ impl Distro {
 
         let condition = conds.join(" || ");
 
-        buf.push_str(&format!(
+        write!(
+            buf,
             r###"
         if {condition} {{
             return Some(Self::{variant});
         }}
 "###
-        ));
+        )
+        .unwrap();
     }
 
     buf.push_str(
@@ -155,13 +160,15 @@ impl Distro {
 
     let quotes = "#".repeat(80);
     for (variant, AsciiDistro { art, .. }) in &variants {
-        buf.push_str(&format!(
+        write!(
+            buf,
             r###"
             Self::{variant} => r{quotes}"
 {art}
 "{quotes},
 "###,
-        ));
+        )
+        .unwrap();
     }
 
     buf.push_str(

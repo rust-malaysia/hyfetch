@@ -22,7 +22,6 @@ pub struct Options {
     pub args: Option<Vec<String>>,
     pub scale: Option<f32>,
     pub lightness: Option<Lightness>,
-    pub overlay: bool,
     pub june: bool,
     pub debug: bool,
     pub distro: Option<String>,
@@ -122,9 +121,6 @@ BACKEND={{{backends}}}",
         .help("Set lightness value of the colors")
         .argument("LIGHTNESS")
         .optional();
-    let overlay = long("c-overlay")
-        .help("Use experimental overlay color adjusting instead of HSL lightness")
-        .switch();
     let june = long("june").help("Show pride month easter egg").switch();
     let debug = long("debug").help("Debug mode").switch();
     let distro = long("distro")
@@ -160,7 +156,6 @@ BACKEND={{{backends}}}",
         args,
         scale,
         lightness,
-        overlay,
         june,
         debug,
         distro,
