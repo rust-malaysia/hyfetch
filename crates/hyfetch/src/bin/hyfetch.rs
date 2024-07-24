@@ -139,7 +139,9 @@ fn main() -> Result<()> {
     let (asc, fore_back) = if let Some(path) = options.ascii_file {
         (
             fs::read_to_string(&path)
-                .with_context(|| format!("failed to read ascii from {path:?}"))?,
+                .with_context(|| format!("failed to read ascii from {path:?}"))?
+                .lines()
+                .join("\n"),
             None,
         )
     } else {
