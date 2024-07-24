@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::fs;
 #[cfg(windows)]
 use std::io;
-use std::io::Write as _;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -121,7 +121,7 @@ impl ColorAlignment {
                             .with_length(length)
                             .context("failed to spread color profile to length")?
                     };
-                    asc.split('\n')
+                    asc.lines()
                         .enumerate()
                         .map(|(i, line)| {
                             let line = line.replace(
@@ -165,7 +165,7 @@ impl ColorAlignment {
                 let asc = {
                     let ac = NEOFETCH_COLORS_AC
                         .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
-                    asc.split('\n')
+                    asc.lines()
                         .map(|line| {
                             let mut matches = ac.find_iter(line).peekable();
                             let mut dst = String::new();
@@ -261,8 +261,6 @@ impl ColorAlignment {
                     ac.replace_all(asc.as_ref(), &REPLACEMENTS)
                 };
 
-                let lines: Vec<_> = asc.split('\n').collect();
-
                 // Add new colors
                 match self {
                     Self::Horizontal { .. } => {
@@ -272,8 +270,7 @@ impl ColorAlignment {
                                 .with_length(length)
                                 .context("failed to spread color profile to length")?
                         };
-                        lines
-                            .into_iter()
+                        asc.lines()
                             .enumerate()
                             .map(|(i, line)| {
                                 let fore = colors[i]
@@ -282,8 +279,8 @@ impl ColorAlignment {
                             })
                             .join("\n")
                     },
-                    Self::Vertical { .. } => lines
-                        .into_iter()
+                    Self::Vertical { .. } => asc
+                        .lines()
                         .map(|line| {
                             let line = color_profile
                                 .color_text(
@@ -327,10 +324,7 @@ impl ColorAlignment {
                 };
 
                 // Reset colors at end of each line to prevent color bleeding
-                let asc = asc
-                    .split('\n')
-                    .map(|line| format!("{line}{reset}"))
-                    .join("\n");
+                let asc = asc.lines().map(|line| format!("{line}{reset}")).join("\n");
 
                 asc
             },
@@ -425,12 +419,16 @@ where
         };
 
         if let Some(selected) = find_selection(&selection, options) {
-            println!();
+            writeln!(io::stdout()).context("failed to write to stdout")?;
 
             return Ok(selected);
         } else {
             let options_text = options.iter().map(AsRef::as_ref).join("|");
-            println!("Invalid selection! {selection} is not one of {options_text}");
+            writeln!(
+                io::stdout(),
+                "Invalid selection! {selection} is not one of {options_text}"
+            )
+            .context("failed to write message to stdout")?;
         }
     }
 
@@ -657,12 +655,12 @@ where
     };
 
     let width = asc
-        .split('\n')
+        .lines()
         .map(|line| line.graphemes(true).count())
         .max()
         .expect("line iterator should not be empty");
     let width = u8::try_from(width).expect("`width` should fit in `u8`");
-    let height = asc.split('\n').count();
+    let height = asc.lines().count();
     let height = u8::try_from(height).expect("`height` should fit in `u8`");
 
     (width, height)
@@ -677,7 +675,7 @@ where
 
     let (w, _) = ascii_size(asc);
 
-    asc.split('\n')
+    asc.lines()
         .map(|line| {
             let (line_w, _) = ascii_size(line);
             let pad = " ".repeat(usize::from(w - line_w));
@@ -699,7 +697,7 @@ where
 
     let mut last = None;
     Ok(asc
-        .split('\n')
+        .lines()
         .map(|line| {
             let mut new = String::new();
             let mut matches = ac.find_iter(line).peekable();

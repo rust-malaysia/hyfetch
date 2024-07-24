@@ -28,22 +28,22 @@ const NOTICE: &str = "Press enter to continue";
 #[allow(clippy::too_many_lines)]
 pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
     let key_pressed = Arc::new(AtomicBool::new(false));
-    let mut input: String = String::new();
+
     // TODO: use non-blocking I/O; no need for another thread
     let _handle = thread::spawn({
         let key_pressed = Arc::clone(&key_pressed);
         move || {
             loop {
-                match io::stdin().read_line(&mut input) {
-                    Ok(0) => {
-                        // Ignore EOF
-                    },
-                    Ok(_) => {
+                match io::stdin().lines().next() {
+                    Some(Ok(_)) => {
                         key_pressed.store(true, Ordering::Release);
                         break;
                     },
-                    Err(err) => {
-                        eprintln!("failed to read line from standard input: {err}");
+                    Some(Err(err)) => {
+                        eprintln!("failed to read line from stdin: {err}");
+                    },
+                    None => {
+                        // EOF
                     },
                 }
             }
@@ -51,12 +51,12 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
     });
 
     let text = &TEXT_ASCII[1..TEXT_ASCII.len() - 1];
-    let text_lines: Vec<&str> = text.split('\n').collect();
+    let text_lines: Vec<&str> = text.lines().collect();
     let text_height: usize = text_lines.len();
     let text_width: usize = text_lines[0].len();
 
     let speed = 2;
-    let frame_delay: Duration = Duration::from_secs_f32(1.0 / 25.0);
+    let frame_delay = Duration::from_secs_f32(1.0 / 25.0);
 
     let mut frame: usize = 0;
 
@@ -149,7 +149,7 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
 
         write!(io::stdout(), "{buf}")
             .and_then(|_| io::stdout().flush())
-            .context("failed to write `buf` to stdout")?;
+            .context("failed to write to stdout")?;
 
         Ok(())
     };
