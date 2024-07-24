@@ -101,8 +101,7 @@ fn main() -> Result<()> {
         || now.month() == Month::June && !june_path.is_file() && io::stdout().is_terminal();
 
     if show_pride_month && !config.pride_month_disable {
-        // TODO
-        pride_month::start_animation();
+        pride_month::start_animation(color_mode).context("failed to draw pride month animation")?;
         println!();
         println!("Happy pride month!");
         println!("(You can always view the animation again with `hyfetch --june`)");
