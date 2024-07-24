@@ -4,5 +4,6 @@ pub mod distros;
 pub mod models;
 pub mod neofetch_util;
 pub mod presets;
+pub mod pride_month;
 pub mod types;
 pub mod utils;

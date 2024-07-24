@@ -24,6 +24,7 @@ use hyfetch::neofetch_util::{
     NEOFETCH_COLORS_AC, NEOFETCH_COLOR_PATTERNS, TEST_ASCII,
 };
 use hyfetch::presets::{AssignLightness, Preset};
+use hyfetch::pride_month;
 use hyfetch::types::{AnsiMode, Backend, TerminalTheme};
 use hyfetch::utils::{get_cache_path, input};
 use indexmap::{IndexMap, IndexSet};
@@ -100,8 +101,7 @@ fn main() -> Result<()> {
         || now.month() == Month::June && !june_path.is_file() && io::stdout().is_terminal();
 
     if show_pride_month && !config.pride_month_disable {
-        // TODO
-        // pride_month.start_animation();
+        pride_month::start_animation(color_mode).context("failed to draw pride month animation")?;
         println!();
         println!("Happy pride month!");
         println!("(You can always view the animation again with `hyfetch --june`)");
