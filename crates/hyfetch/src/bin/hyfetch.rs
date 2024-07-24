@@ -159,7 +159,7 @@ fn main() -> Result<()> {
 ///
 /// Returns `None` if the config file does not exist.
 #[tracing::instrument(level = "debug")]
-pub fn load_config(path: &PathBuf) -> Result<Option<Config>> {
+fn load_config(path: &PathBuf) -> Result<Option<Config>> {
     let mut file = match File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
@@ -188,7 +188,7 @@ pub fn load_config(path: &PathBuf) -> Result<Option<Config>> {
 ///
 /// The config is automatically stored to file.
 #[tracing::instrument(level = "debug")]
-pub fn create_config(
+fn create_config(
     path: &PathBuf,
     distro: Option<&String>,
     backend: Backend,
