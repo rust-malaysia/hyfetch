@@ -57,7 +57,6 @@ fn main() -> Result<()> {
     let distro = options.distro.as_ref();
 
     let backend = options.backend.unwrap_or(Backend::Neofetch);
-    let use_overlay = options.overlay;
 
     if options.test_print {
         let (asc, _) = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
@@ -66,27 +65,15 @@ fn main() -> Result<()> {
     }
 
     let config = if options.config {
-        create_config(
-            &options.config_file,
-            distro,
-            backend,
-            use_overlay,
-            debug_mode,
-        )
-        .context("failed to create config")?
+        create_config(&options.config_file, distro, backend, debug_mode)
+            .context("failed to create config")?
     } else if let Some(config) =
         load_config(&options.config_file).context("failed to load config")?
     {
         config
     } else {
-        create_config(
-            &options.config_file,
-            distro,
-            backend,
-            use_overlay,
-            debug_mode,
-        )
-        .context("failed to create config")?
+        create_config(&options.config_file, distro, backend, debug_mode)
+            .context("failed to create config")?
     };
 
     let color_mode = options.mode.unwrap_or(config.mode);
@@ -134,7 +121,7 @@ fn main() -> Result<()> {
     } else if let Some(lightness) = options.lightness {
         color_profile.with_lightness(AssignLightness::Replace(lightness))
     } else {
-        color_profile.with_lightness_adaptive(config.lightness(), theme, use_overlay)
+        color_profile.with_lightness_adaptive(config.lightness(), theme)
     };
     debug!(?color_profile, "lightened color profile");
 
@@ -205,7 +192,6 @@ pub fn create_config(
     path: &PathBuf,
     distro: Option<&String>,
     backend: Backend,
-    use_overlay: bool,
     debug_mode: bool,
 ) -> Result<Config> {
     // Detect terminal environment (doesn't work for all terminal emulators,
@@ -536,7 +522,7 @@ pub fn create_config(
 
     let default_lightness = Config::default_lightness(theme);
     let preset_default_colored = default_color_profile
-        .with_lightness_adaptive(default_lightness, theme, use_overlay)
+        .with_lightness_adaptive(default_lightness, theme)
         .color_text(
             "preset",
             color_mode,
@@ -589,7 +575,7 @@ pub fn create_config(
                 &mut option_counter,
                 "Selected flag",
                 &color_profile
-                    .with_lightness_adaptive(default_lightness, theme, use_overlay)
+                    .with_lightness_adaptive(default_lightness, theme)
                     .color_text(
                         preset.as_ref(),
                         color_mode,
@@ -667,7 +653,6 @@ pub fn create_config(
                                 Lightness::new(r)
                                     .expect("generated lightness should not be invalid"),
                                 theme,
-                                use_overlay,
                             ),
                             color_mode,
                             theme,
@@ -736,7 +721,7 @@ pub fn create_config(
 
     let lightness = select_lightness().context("failed to select lightness")?;
     debug!(?lightness, "selected lightness");
-    let color_profile = color_profile.with_lightness_adaptive(lightness, theme, use_overlay);
+    let color_profile = color_profile.with_lightness_adaptive(lightness, theme);
     update_title(
         &mut title,
         &mut option_counter,
