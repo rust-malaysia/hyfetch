@@ -1,11 +1,14 @@
-//by 1337isnot1337
-
 use crate::{
-    color_util::{color, ForegroundBackground, ToAnsiString},
+    color_util::{self, color, ForegroundBackground, ToAnsiString},
     presets::Preset,
     types,
 };
-use palette::{encoding::Srgb, rgb::Rgb};
+use palette::{
+    Alpha, WithAlpha,
+    blend::Blend,
+    encoding::Srgb,
+    rgb::{Rgb, Rgba},
+};
 use std::{
     io::{self, Write},
     process,
@@ -13,11 +16,20 @@ use std::{
     thread,
     time::Duration,
 };
+use strum::VariantArray;
+use terminal_size::{terminal_size, Height, Width};
 use types::AnsiMode;
 
-use term_size::dimensions;
-
 static KEY_PRESSED: AtomicBool = AtomicBool::new(false);
+
+const TEXT_ASCII: &str = r"
+.======================================================.
+| .  .              .__       .     .  .       , .   | |
+| |__| _.._ ._   .  [__)._.* _| _   |\/| _ ._ -+-|_  | |
+| |  |(_][_)[_)\_|  |   [  |(_](/,  |  |(_)[ ) | [ ) * |
+|        |  |  ._|                                     |
+'======================================================'
+";
 
 #[allow(clippy::too_many_lines)]
 pub fn start_animation() {
@@ -32,12 +44,7 @@ pub fn start_animation() {
     });
 
     // the "happy pride month" text that is displayed
-    let text = r".======================================================.
-| .  .              .__       .     .  .       , .   | |
-| |__| _.._ ._   .  [__)._.* _| _   |\/| _ ._ -+-|_  | |
-| |  |(_][_)[_)\_|  |   [  |(_](/,  |  |(_)[ ) | [ ) * |
-|        |  |  ._|                                     |
-'======================================================'";
+    let text = &TEXT_ASCII[1..TEXT_ASCII.len() - 1];
 
     let text_lines: Vec<&str> = text.split('\n').collect();
     let text_height: usize = text_lines.len();
@@ -51,121 +58,52 @@ pub fn start_animation() {
     // colors: list[RGB] = []
     let mut frame: usize = 0;
 
-    let Some((w, h)) = dimensions() else {
-        panic!("Couldn't get terminal size");
+    let size = terminal_size();
+
+    let (term_width, term_height) = if let Some((Width(w), Height(h))) = size {
+        (w as usize, h as usize)
+    } else {
+        panic!("Could not resolve terminal size");
     };
+
     //all the variables needed for the animation
     let blocks: usize = 9;
-    let block_width: usize = w / blocks;
+    let block_width: usize = term_width / blocks;
 
-    let text_start_y = (h / 2) - (text_height / 2);
+    let text_start_y = (term_height / 2) - (text_height / 2);
     let text_end_y = text_start_y + text_height;
-    let text_start_x = (w / 2) - (text_width / 2);
+    let text_start_x = (term_width / 2) - (text_width / 2);
     let text_end_x = text_start_x + text_width;
 
-    let notice_start_x = w - notice.len() - 1;
-    let notice_end_x = w - 1;
-    let notice_y = h - 1;
+    let notice_start_x = term_width - notice.len() - 1;
+    let notice_end_x = term_width - 1;
+    let notice_y = term_height - 1;
+    let colors: Vec<Rgb<Srgb, u8>> = Preset::VARIANTS
+        .iter()
+        .flat_map(|p| p.color_profile().colors)
+        .collect::<Vec<_>>();
 
-    //it is inefficient but I don't know how to iter over values in an enum
-    let colors = [
-        Preset::Rainbow,
-        Preset::Transgender,
-        Preset::Nonbinary,
-        Preset::Xenogender,
-        Preset::Agender,
-        Preset::Queer,
-        Preset::Genderfluid,
-        Preset::Bisexual,
-        Preset::Pansexual,
-        Preset::Polysexual,
-        Preset::Omnisexual,
-        Preset::Omniromantic,
-        Preset::GayMen,
-        Preset::Lesbian,
-        Preset::Abrosexual,
-        Preset::Asexual,
-        Preset::Aromantic,
-        Preset::Aroace1,
-        Preset::Aroace2,
-        Preset::Aroace3,
-        Preset::Greysexual,
-        Preset::Autosexual,
-        Preset::Intergender,
-        Preset::Greygender,
-        Preset::Akiosexual,
-        Preset::Bigender,
-        Preset::Demigender,
-        Preset::Demiboy,
-        Preset::Demigirl,
-        Preset::Transmasculine,
-        Preset::Transfeminine,
-        Preset::Genderfaun,
-        Preset::Demifaun,
-        Preset::Genderfae,
-        Preset::Demifae,
-        Preset::Neutrois,
-        Preset::Biromantic1,
-        Preset::Autoromantic,
-        Preset::Boyflux2,
-        Preset::Girlflux,
-        Preset::Genderflux,
-        Preset::Finsexual,
-        Preset::Unlabeled1,
-        Preset::Unlabeled2,
-        Preset::Pangender,
-        Preset::GenderNonconforming1,
-        Preset::GenderNonconforming2,
-        Preset::Femboy,
-        Preset::Tomboy,
-        Preset::Gynesexual,
-        Preset::Androsexual,
-        Preset::Gendervoid,
-        Preset::Voidgirl,
-        Preset::Voidboy,
-        Preset::NonhumanUnity,
-        Preset::Plural,
-        Preset::Fraysexual,
-        // Meme flag
-        Preset::Beiyang,
-        // Meme flag
-        Preset::Burger,
-        Preset::Baker,
-    ]
-    .into_iter()
-    .flat_map(|p| p.color_profile().colors)
-    .collect::<Vec<_>>();
-    //need to figure out how to print a darker background for the text, will use black for it
-    //once i figure out how to do it
-    /*let black: Rgb<Srgb, u8> = Rgb {
-        red: 0,
-        green: 0,
-        blue: 0,
-        standard: PhantomData,
-    };*/
+    //used for foreground and black color overlay, respectively
     let fg = "#FFE09B".parse::<Rgb<Srgb, u8>>().unwrap();
+    let black: Rgba<Srgb, f64> = Rgba::<Srgb, f64>::new(0.0, 0.0, 0.0, 0.5);
 
     loop {
         //clear screen first
-        match clearscreen::clear() {
-            Ok(()) => {},
-            Err(e) => panic!("Failed to clear screen: {e}"),
-        }
+        color_util::clear_screen(None, AnsiMode::Rgb, false).unwrap();
 
         {
             //this buffer holds all of the color
             let mut buf: String = String::new();
 
-            for y in 0..h {
+            for y in 0..term_height {
                 buf += &colors[((frame + y) / block_width) % colors.len()]
                     .to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Background);
                 buf += &fg.to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Foreground);
 
                 let mut x = 0;
                 //loop over width
-                while x < w {
+                while x < term_width {
                     let idx =
-                    //potential truncation worry but it should be fine
                         frame + x + y + (2.0 * (y as f64 + 0.5 * frame as f64).sin()) as usize;
                     let y_text = text_start_y <= y && y < text_end_y;
                     let border = 1 + usize::from(!(y == text_start_y || y == text_end_y - 1));
@@ -177,16 +115,25 @@ pub fn start_animation() {
                         || x == notice_end_x + 1
                     {
                         //print the color of the current frame
-                        let c = colors[(idx / block_width) % colors.len()];
+
+                        let c: Alpha<Rgb<Srgb, f64>, f64> = colors
+                            [(idx / block_width) % colors.len()]
+                        .into_format::<f64>()
+                        .into();
+
                         if (y_text && (text_start_x - border <= x) && (x < text_end_x + border))
                             || (y == notice_y && notice_start_x - 1 <= x && x < notice_end_x + 1)
                         {
-                            //buf += c.overlay(black, 0.5).to_ansi_rgb(foreground=False)
-                            buf += // <--- && ^^^^^^ need to print a darker background somehow
-                                &c.to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Background);
+                            buf += &c
+                                .overlay(black) //make the background darker
+                                .without_alpha()   //remove alpha wrapper
+                                .into_format::<u8>()
+                                .to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Background);
                         } else {
-                            buf +=
-                                &c.to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Background);
+                            buf += &c
+                                .without_alpha()
+                                .into_format()
+                                .to_ansi_string(AnsiMode::Rgb, ForegroundBackground::Background);
                         }
                     }
 
@@ -206,23 +153,26 @@ pub fn start_animation() {
                     x += 1;
                 }
 
-                if y != h - 1 {
+                if y != term_height - 1 {
                     buf += &color("&r\n", AnsiMode::Rgb).unwrap();
                 }
             }
             //flush stdout
             print!("{buf}");
+
             io::stdout().flush().unwrap();
         };
         frame += speed;
         thread::sleep(frame_delay);
         if KEY_PRESSED.load(Ordering::SeqCst) {
-            print!("\x1b[2J\x1b[H");
+            //this ansi code is needed in that it resets the background.
+            //otherwise we get a lot of nasty background color left over!
+            //the color_util::clear_screen should implement it in the future
+            //so that it isn't needed here.
+            print!("\x1b[49m");
             io::stdout().flush().unwrap();
-            clearscreen::clear().unwrap();
-
+            color_util::clear_screen(None, AnsiMode::Rgb, false).unwrap();
             process::exit(0);
         }
     }
 }
-
