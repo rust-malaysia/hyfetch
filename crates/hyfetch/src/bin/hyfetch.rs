@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::cmp;
 use std::fmt::Write as _;
 use std::fs::{self, File};
-use std::io::{self, IsTerminal as _, Read as _};
+use std::io::{self, IsTerminal as _, Read as _, Write as _};
 use std::iter::zip;
 use std::path::PathBuf;
 
@@ -61,7 +61,7 @@ fn main() -> Result<()> {
 
     if options.test_print {
         let (asc, _) = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
-        println!("{asc}");
+        writeln!(io::stdout(), "{asc}").context("failed to write ascii to stdout")?;
         return Ok(());
     }
 
@@ -102,10 +102,12 @@ fn main() -> Result<()> {
 
     if show_pride_month && !config.pride_month_disable {
         pride_month::start_animation(color_mode).context("failed to draw pride month animation")?;
-        println!();
-        println!("Happy pride month!");
-        println!("(You can always view the animation again with `hyfetch --june`)");
-        println!();
+        writeln!(
+            io::stdout(),
+            "\nHappy pride month!\n(You can always view the animation again with `hyfetch \
+             --june`)\n"
+        )
+        .context("failed to write message to stdout")?;
 
         if !june_path.is_file() {
             fs::create_dir_all(&cache_path)
@@ -252,8 +254,7 @@ pub fn create_config(
         )
         .expect("logo should not contain invalid color codes")
     );
-    clear_screen(Some(&title), color_mode, debug_mode)
-        .expect("title should not contain invalid color codes");
+    clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
 
     let mut option_counter: u8 = 1;
 
@@ -267,9 +268,9 @@ pub fn create_config(
         *option_counter += 1;
     }
 
-    fn print_title_prompt(option_counter: u8, prompt: &str, color_mode: AnsiMode) {
+    fn print_title_prompt(option_counter: u8, prompt: &str, color_mode: AnsiMode) -> Result<()> {
         printc(format!("&a{option_counter}. {prompt}"), color_mode)
-            .expect("prompt should not contain invalid color codes");
+            .context("failed to print prompt")
     }
 
     //////////////////////////////
@@ -287,7 +288,7 @@ pub fn create_config(
                 ),
                 color_mode,
             )
-            .expect("message should not contain invalid color codes");
+            .context("failed to print message")?;
             input(Some("Press enter to continue...")).context("failed to read input")?;
         }
     }
@@ -302,8 +303,7 @@ pub fn create_config(
             return Ok((AnsiMode::Rgb, "Detected color mode"));
         }
 
-        clear_screen(Some(&title), color_mode, debug_mode)
-            .expect("title should not contain invalid color codes");
+        clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
 
         let (Width(term_w), _) = terminal_size().context("failed to get terminal size")?;
 
@@ -352,8 +352,7 @@ pub fn create_config(
                     s
                 },
             );
-            printc(line, AnsiMode::Ansi256)
-                .expect("message should not contain invalid color codes");
+            printc(line, AnsiMode::Ansi256).context("failed to print 8-bit color test line")?;
         }
         {
             let label = format!(
@@ -374,17 +373,21 @@ pub fn create_config(
                     s
                 },
             );
-            printc(line, AnsiMode::Rgb).expect("message should not contain invalid color codes");
+            printc(line, AnsiMode::Rgb).context("failed to print RGB color test line")?;
         }
 
-        println!();
+        writeln!(io::stdout()).context("failed to write to stdout")?;
         print_title_prompt(
             option_counter,
             "Which &bcolor system &ado you want to use?",
             color_mode,
-        );
-        println!(r#"(If you can't see colors under "RGB Color Testing", please choose 8bit)"#);
-        println!();
+        )
+        .context("failed to print title prompt")?;
+        writeln!(
+            io::stdout(),
+            "(If you can't see colors under \"RGB Color Testing\", please choose 8bit)\n"
+        )
+        .context("failed to write message to stdout")?;
 
         let choice = literal_input(
             "Your choice?",
@@ -392,7 +395,8 @@ pub fn create_config(
             AnsiMode::Rgb.as_ref(),
             true,
             color_mode,
-        )?;
+        )
+        .context("failed to ask for choice input")?;
         Ok((
             choice.parse().expect("selected color mode should be valid"),
             "Selected color mode",
@@ -414,21 +418,22 @@ pub fn create_config(
             return Ok((det_bg.theme(), "Detected background color"));
         }
 
-        clear_screen(Some(&title), color_mode, debug_mode)
-            .expect("title should not contain invalid color codes");
+        clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
 
         print_title_prompt(
             option_counter,
             "Is your terminal in &blight mode&~ or &4dark mode&~?",
             color_mode,
-        );
+        )
+        .context("failed to print title prompt")?;
         let choice = literal_input(
             "",
             TerminalTheme::VARIANTS,
             TerminalTheme::Dark.as_ref(),
             true,
             color_mode,
-        )?;
+        )
+        .context("failed to ask for choice input")?;
         Ok((
             choice.parse().expect("selected theme should be valid"),
             "Selected background color",
@@ -500,29 +505,33 @@ pub fn create_config(
         pages.push(page);
     }
 
-    let print_flag_page = |page, page_num| {
-        clear_screen(Some(&title), color_mode, debug_mode)
-            .expect("title should not contain invalid color codes");
-        print_title_prompt(option_counter, "Let's choose a flag!", color_mode);
-        println!("Available flag presets:");
-        println!("Page: {page_num} of {num_pages}", page_num = page_num + 1);
-        println!();
+    let print_flag_page = |page, page_num| -> Result<()> {
+        clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
+        print_title_prompt(option_counter, "Let's choose a flag!", color_mode)
+            .context("failed to print title prompt")?;
+        writeln!(
+            io::stdout(),
+            "Available flag presets:\nPage: {page_num} of {num_pages}\n",
+            page_num = page_num + 1
+        )
+        .context("failed to write header to stdout")?;
         for &row in page {
-            print_flag_row(row, color_mode);
+            print_flag_row(row, color_mode).context("failed to print flag row")?;
         }
-        println!();
+        writeln!(io::stdout()).context("failed to write to stdout")?;
+        Ok(())
     };
 
-    fn print_flag_row(row: &[[String; 4]], color_mode: AnsiMode) {
+    fn print_flag_row(row: &[[String; 4]], color_mode: AnsiMode) -> Result<()> {
         for i in 0..4 {
             let mut line = Vec::new();
             for flag in row {
                 line.push(&*flag[i]);
             }
-            printc(line.join("  "), color_mode)
-                .expect("flag line should not contain invalid color codes");
+            printc(line.join("  "), color_mode).context("failed to print line")?;
         }
-        println!();
+        writeln!(io::stdout()).context("failed to write to stdout")?;
+        Ok(())
     }
 
     let default_lightness = Config::default_lightness(theme);
@@ -541,7 +550,7 @@ pub fn create_config(
 
     let mut page: u8 = 0;
     loop {
-        print_flag_page(&pages[usize::from(page)], page);
+        print_flag_page(&pages[usize::from(page)], page).context("failed to print flag page")?;
 
         let mut opts: Vec<&str> = <Preset as VariantNames>::VARIANTS.into();
         if page < num_pages - 1 {
@@ -550,7 +559,11 @@ pub fn create_config(
         if page > 0 {
             opts.push("prev");
         }
-        println!("Enter 'next' to go to the next page and 'prev' to go to the previous page.");
+        writeln!(
+            io::stdout(),
+            "Enter 'next' to go to the next page and 'prev' to go to the previous page."
+        )
+        .context("failed to write message to stdout")?;
         let selection = literal_input(
             format!(
                 "Which {preset} do you want to use? ",
@@ -561,6 +574,7 @@ pub fn create_config(
             false,
             color_mode,
         )
+        .context("failed to ask for choice input")
         .context("failed to select preset")?;
         if selection == "next" {
             page += 1;
@@ -593,33 +607,34 @@ pub fn create_config(
 
     let test_ascii = &TEST_ASCII[1..TEST_ASCII.len() - 1];
     let test_ascii_width = test_ascii
-        .split('\n')
+        .lines()
         .map(|line| line.graphemes(true).count())
         .max()
         .expect("line iterator should not be empty");
     let test_ascii_width =
         u8::try_from(test_ascii_width).expect("`test_ascii_width` should fit in `u8`");
-    let test_ascii_height = test_ascii.split('\n').count();
+    let test_ascii_height = test_ascii.lines().count();
     let test_ascii_height =
         u8::try_from(test_ascii_height).expect("`test_ascii_height` should fit in `u8`");
 
     let select_lightness = || -> Result<Lightness> {
-        clear_screen(Some(&title), color_mode, debug_mode)
-            .expect("title should not contain invalid color codes");
+        clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
         print_title_prompt(
             option_counter,
             "Let's adjust the color brightness!",
             color_mode,
-        );
-        println!(
-            "The colors might be a little bit too {bright_dark} for {light_dark} mode.",
+        )
+        .context("failed to print title prompt")?;
+        writeln!(
+            io::stdout(),
+            "The colors might be a little bit too {bright_dark} for {light_dark} mode.\n",
             bright_dark = match theme {
                 TerminalTheme::Light => "bright",
                 TerminalTheme::Dark => "dark",
             },
             light_dark = theme.as_ref()
-        );
-        println!();
+        )
+        .context("failed to write message to stdout")?;
 
         let color_align = ColorAlignment::Horizontal { fore_back: None };
 
@@ -658,7 +673,7 @@ pub fn create_config(
                             theme,
                         )
                         .expect("recoloring test ascii should not fail");
-                    asc.split('\n').map(ToOwned::to_owned).collect()
+                    asc.lines().map(ToOwned::to_owned).collect()
                 })
                 .collect();
             for i in 0..usize::from(test_ascii_height) {
@@ -666,19 +681,19 @@ pub fn create_config(
                 for lines in &row {
                     line.push(&*lines[i]);
                 }
-                printc(line.join("  "), color_mode)
-                    .expect("test ascii line should not contain invalid color codes");
+                printc(line.join("  "), color_mode).context("failed to print test ascii line")?;
             }
         }
 
         loop {
-            println!();
-            println!(
-                "Which brightness level looks the best? (Default: {default:.0}% for {light_dark} \
-                 mode)",
+            writeln!(
+                io::stdout(),
+                "\nWhich brightness level looks the best? (Default: {default:.0}% for \
+                 {light_dark} mode)",
                 default = f32::from(default_lightness) * 100.0,
                 light_dark = theme.as_ref()
-            );
+            )
+            .context("failed to write prompt to stdout")?;
             let lightness = input(Some("> "))
                 .context("failed to read input")?
                 .trim()
@@ -695,7 +710,7 @@ pub fn create_config(
                          as 45%, .45, or 45",
                         color_mode,
                     )
-                    .expect("message should not contain invalid color codes");
+                    .context("failed to print message")?;
                 },
             }
         }
@@ -758,8 +773,7 @@ pub fn create_config(
     // Loop for random rolling
     let mut rng = fastrand::Rng::new();
     loop {
-        clear_screen(Some(&title), color_mode, debug_mode)
-            .expect("title should not contain invalid color codes");
+        clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
 
         // Random color schemes
         let mut preset_indices: Vec<PresetIndexedColor> =
@@ -814,22 +828,25 @@ pub fn create_config(
                 colors,
             })
         }));
-        let asciis = arrangements.iter().map(|(k, ca)| {
-            let mut v: Vec<String> = ca
-                .recolor_ascii(&asc, &color_profile, color_mode, theme)
-                .expect("recoloring ascii should not fail")
-                .split('\n')
-                .map(ToOwned::to_owned)
-                .collect();
-            v.push(format!(
-                "{k:^asc_width$}",
-                asc_width = usize::from(asc_width)
-            ));
-            v
-        });
+        let asciis: Vec<Vec<String>> = arrangements
+            .iter()
+            .map(|(k, ca)| {
+                let mut v: Vec<String> = ca
+                    .recolor_ascii(&asc, &color_profile, color_mode, theme)
+                    .context("failed to recolor ascii")?
+                    .lines()
+                    .map(ToOwned::to_owned)
+                    .collect();
+                v.push(format!(
+                    "{k:^asc_width$}",
+                    asc_width = usize::from(asc_width)
+                ));
+                Ok(v)
+            })
+            .collect::<Result<_>>()?;
 
-        for row in &asciis.chunks(usize::from(ascii_per_row)) {
-            let row: Vec<Vec<String>> = row.into_iter().collect();
+        for row in &asciis.into_iter().chunks(usize::from(ascii_per_row)) {
+            let row: Vec<Vec<String>> = row.collect();
 
             // Print by row
             for i in 0..usize::from(asc_lines) + 1 {
@@ -837,27 +854,27 @@ pub fn create_config(
                 for lines in &row {
                     line.push(&*lines[i]);
                 }
-                printc(line.join("  "), color_mode)
-                    .expect("ascii line should not contain invalid color codes");
+                printc(line.join("  "), color_mode).context("failed to print ascii line")?;
             }
-
-            println!();
+            writeln!(io::stdout()).context("failed to write to stdout")?;
         }
 
         print_title_prompt(
             option_counter,
             "Let's choose a color arrangement!",
             color_mode,
-        );
-        println!(
+        )
+        .context("failed to print title prompt")?;
+        writeln!(
+            io::stdout(),
             "You can choose standard horizontal or vertical alignment, or use one of the random \
-             color schemes."
-        );
-        println!(r#"You can type "roll" to randomize again."#);
-        println!();
+             color schemes.\nYou can type \"roll\" to randomize again.\n"
+        )
+        .context("failed to write message to stdout")?;
         let mut opts: Vec<Cow<str>> = ["horizontal", "vertical", "roll"].map(Into::into).into();
         opts.extend((0..random_count).map(|i| format!("random{i}").into()));
         let choice = literal_input("Your choice?", &opts[..], "horizontal", true, color_mode)
+            .context("failed to ask for choice input")
             .context("failed to select color alignment")?;
 
         if choice == "roll" {
@@ -891,9 +908,9 @@ pub fn create_config(
     // 6. Select *fetch backend
 
     let select_backend = || -> Result<Backend> {
-        clear_screen(Some(&title), color_mode, debug_mode)
-            .expect("title should not contain invalid color codes");
-        print_title_prompt(option_counter, "Select a *fetch backend", color_mode);
+        clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
+        print_title_prompt(option_counter, "Select a *fetch backend", color_mode)
+            .context("failed to print title prompt")?;
 
         // Check if fastfetch is installed
         let fastfetch_path = fastfetch_path().context("failed to get fastfetch path")?;
@@ -906,7 +923,7 @@ pub fn create_config(
             "- &bneofetch&r: Written in bash, &nbest compatibility&r on Unix systems",
             color_mode,
         )
-        .expect("message should not contain invalid color codes");
+        .context("failed to print message")?;
         printc(
             format!(
                 "- &bfastfetch&r: Written in C, &nbest performance&r {installed_not_installed}",
@@ -916,19 +933,18 @@ pub fn create_config(
             ),
             color_mode,
         )
-        .expect("message should not contain invalid color codes");
+        .context("failed to print message")?;
         #[cfg(feature = "macchina")]
         printc(
             format!(
-                "- &bmacchina&r: Written in Rust, &nbest performance&r {installed_not_installed}",
+                "- &bmacchina&r: Written in Rust, &nbest performance&r {installed_not_installed}\n",
                 installed_not_installed = macchina_path
                     .map(|path| format!("&a(Installed at {path})", path = path.display()))
                     .unwrap_or_else(|| "&c(Not installed)".to_owned())
             ),
             color_mode,
         )
-        .expect("message should not contain invalid color codes");
-        println!();
+        .context("failed to print message")?;
 
         let choice = literal_input(
             "Your choice?",
@@ -936,7 +952,8 @@ pub fn create_config(
             backend.as_ref(),
             true,
             color_mode,
-        )?;
+        )
+        .context("failed to ask for choice input")?;
         Ok(choice.parse().expect("selected backend should be valid"))
     };
 
@@ -949,8 +966,7 @@ pub fn create_config(
     );
 
     // Create config
-    clear_screen(Some(&title), color_mode, debug_mode)
-        .expect("title should not contain invalid color codes");
+    clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
     let config = Config {
         preset,
         mode: color_mode,
@@ -965,7 +981,8 @@ pub fn create_config(
     debug!(?config, "created config");
 
     // Save config
-    let save = literal_input("Save config?", &["y", "n"], "y", true, color_mode)?;
+    let save = literal_input("Save config?", &["y", "n"], "y", true, color_mode)
+        .context("failed to ask for choice input")?;
     if save == "y" {
         let file = File::options()
             .write(true)

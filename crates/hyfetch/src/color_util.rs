@@ -408,27 +408,25 @@ pub fn printc<S>(msg: S, mode: AnsiMode) -> Result<()>
 where
     S: AsRef<str>,
 {
-    let msg = msg.as_ref();
-
-    println!(
+    writeln!(
+        io::stdout(),
         "{msg}",
-        msg = color(format!("{msg}&r"), mode).context("failed to color message")?
-    );
-
-    Ok(())
+        msg = color(format!("{msg}&r", msg = msg.as_ref()), mode)
+            .context("failed to color message")?
+    )
+    .context("failed to write message to stdout")
 }
 
 /// Clears screen using ANSI escape codes.
 pub fn clear_screen(title: Option<&str>, mode: AnsiMode, debug_mode: bool) -> Result<()> {
     if !debug_mode {
-        print!("\x1b[2J\x1b[H");
-        io::stdout().flush()?;
+        write!(io::stdout(), "\x1b[2J\x1b[H")
+            .and_then(|_| io::stdout().flush())
+            .context("failed to write clear screen sequence to stdout")?;
     }
 
     if let Some(title) = title {
-        println!();
-        printc(title, mode).context("failed to color title")?;
-        println!();
+        printc(format!("\n{title}\n"), mode).context("failed to print title")?;
     }
 
     Ok(())

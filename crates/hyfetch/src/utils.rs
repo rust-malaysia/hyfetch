@@ -28,26 +28,16 @@ where
     S: AsRef<str>,
 {
     if let Some(prompt) = prompt {
-        print!("{prompt}", prompt = prompt.as_ref());
-        io::stdout().flush()?;
+        write!(io::stdout(), "{prompt}", prompt = prompt.as_ref())
+            .and_then(|_| io::stdout().flush())
+            .context("failed to write prompt to stdout")?;
     }
 
-    let mut buf = String::new();
     io::stdin()
-        .read_line(&mut buf)
-        .context("failed to read line from standard input")?;
-    let buf = {
-        #[cfg(not(windows))]
-        {
-            buf.strip_suffix('\n').unwrap_or(&buf)
-        }
-        #[cfg(windows)]
-        {
-            buf.strip_suffix("\r\n").unwrap_or(&buf)
-        }
-    };
-
-    Ok(buf.to_owned())
+        .lines()
+        .next()
+        .unwrap_or_else(|| Ok(String::new()))
+        .context("failed to read line from stdin")
 }
 
 /// Finds a command in `PATH`.
