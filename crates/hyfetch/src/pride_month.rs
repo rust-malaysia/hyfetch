@@ -220,8 +220,7 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
                         );
                     } else {
                         buf.push_str(
-                            &c.into_format()
-                                .to_ansi_string(color_mode, ForegroundBackground::Background),
+                            &c.to_ansi_string(color_mode, ForegroundBackground::Background),
                         );
                     }
                 }

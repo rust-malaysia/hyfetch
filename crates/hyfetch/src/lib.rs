@@ -1,3 +1,4 @@
+pub mod ascii;
 pub mod cli_options;
 pub mod color_util;
 pub mod distros;
