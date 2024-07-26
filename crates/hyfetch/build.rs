@@ -174,7 +174,7 @@ impl Distro {
     buf.push_str(
         r###"
         };
-        &art[1..(art.len() - 1)]
+        &art[1..art.len().checked_sub(1).unwrap()]
     }
 }
 "###,

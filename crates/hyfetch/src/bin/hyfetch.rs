@@ -4,7 +4,8 @@ use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, IsTerminal as _, Read as _, Write as _};
 use std::iter::zip;
-use std::path::PathBuf;
+use std::num::{NonZeroU16, NonZeroU8, NonZeroUsize};
+use std::path::{Path, PathBuf};
 
 use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result};
@@ -37,7 +38,6 @@ use terminal_colorsaurus::{background_color, QueryOptions};
 use terminal_size::{terminal_size, Height, Width};
 use time::{Month, OffsetDateTime};
 use tracing::debug;
-use unicode_segmentation::UnicodeSegmentation as _;
 
 fn main() -> Result<()> {
     #[cfg(windows)]
@@ -226,7 +226,7 @@ fn create_config(
 
     let (asc, fore_back) =
         get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
-    let (asc_width, asc_lines) = ascii_size(&asc);
+    let (asc_width, asc_lines) = ascii_size(&asc).context("failed to get ascii size")?;
     let theme = det_bg.map(|bg| bg.theme()).unwrap_or(TerminalTheme::Light);
     let color_mode = det_ansi.unwrap_or(AnsiMode::Ansi256);
     let mut title = format!(
@@ -242,19 +242,25 @@ fn create_config(
     );
     clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
 
-    let mut option_counter: u8 = 1;
+    let mut option_counter = NonZeroU8::new(1).unwrap();
 
-    fn update_title(title: &mut String, option_counter: &mut u8, k: &str, v: &str) {
+    fn update_title(title: &mut String, option_counter: &mut NonZeroU8, k: &str, v: &str) {
         let k: Cow<str> = if k.ends_with(':') {
             k.into()
         } else {
             format!("{k}:").into()
         };
         write!(title, "\n&e{option_counter}. {k:<30} &~{v}").unwrap();
-        *option_counter += 1;
+        *option_counter = option_counter
+            .checked_add(1)
+            .expect("`option_counter` should not overflow `u8`");
     }
 
-    fn print_title_prompt(option_counter: u8, prompt: &str, color_mode: AnsiMode) -> Result<()> {
+    fn print_title_prompt(
+        option_counter: NonZeroU8,
+        prompt: &str,
+        color_mode: AnsiMode,
+    ) -> Result<()> {
         printc(format!("&a{option_counter}. {prompt}"), color_mode)
             .context("failed to print prompt")
     }
@@ -265,8 +271,15 @@ fn create_config(
     {
         let (Width(term_w), Height(term_h)) =
             terminal_size().context("failed to get terminal size")?;
-        let (term_w_min, term_h_min) = (2 * u16::from(asc_width) + 4, 30);
-        if term_w < term_w_min || term_h < term_h_min {
+        let (term_w_min, term_h_min) = (
+            NonZeroU16::from(asc_width)
+                .checked_mul(NonZeroU16::new(2).unwrap())
+                .unwrap()
+                .checked_add(4)
+                .unwrap(),
+            NonZeroU16::new(30).unwrap(),
+        );
+        if term_w < term_w_min.get() || term_h < term_h_min.get() {
             printc(
                 format!(
                     "&cWarning: Your terminal is too small ({term_w} * {term_h}).\nPlease resize \
@@ -444,7 +457,7 @@ fn create_config(
             .map(|name| name.chars().count())
             .max()
             .expect("preset name iterator should not be empty");
-        let spacing = u8::try_from(spacing).expect("`spacing` should fit in `u8`");
+        let spacing: u8 = spacing.try_into().expect("`spacing` should fit in `u8`");
         cmp::max(spacing, 20)
     };
     for preset in <Preset as VariantArray>::VARIANTS {
@@ -469,21 +482,34 @@ fn create_config(
     let (flags_per_row, rows_per_page) = {
         let (Width(term_w), Height(term_h)) =
             terminal_size().context("failed to get terminal size")?;
-        let flags_per_row = term_w / (u16::from(spacing) + 2);
-        let flags_per_row =
-            u8::try_from(flags_per_row).expect("`flags_per_row` should fit in `u8`");
-        let rows_per_page = cmp::max(1, (term_h - 13) / 5);
-        let rows_per_page =
-            u8::try_from(rows_per_page).expect("`rows_per_page` should fit in `u8`");
+        let flags_per_row = term_w.div_euclid(u16::from(spacing).checked_add(2).unwrap());
+        let flags_per_row: u8 = flags_per_row
+            .try_into()
+            .expect("`flags_per_row` should fit in `u8`");
+        let rows_per_page = cmp::max(1, term_h.saturating_sub(13).div_euclid(5));
+        let rows_per_page: u8 = rows_per_page
+            .try_into()
+            .expect("`rows_per_page` should fit in `u8`");
         (flags_per_row, rows_per_page)
     };
     let num_pages =
-        (Preset::COUNT as f32 / (flags_per_row as f32 * rows_per_page as f32)).ceil() as usize;
-    let num_pages = u8::try_from(num_pages).expect("`num_pages` should fit in `u8`");
+        u16::from(u8::try_from(Preset::COUNT).expect("`Preset::COUNT` should fit in `u8`"))
+            .div_ceil(
+                u16::from(flags_per_row)
+                    .checked_mul(u16::from(rows_per_page))
+                    .unwrap(),
+            );
+    let num_pages: u8 = num_pages
+        .try_into()
+        .expect("`num_pages` should fit in `u8`");
 
     // Create pages
     let mut pages = Vec::with_capacity(usize::from(num_pages));
-    for flags in flags.chunks(usize::from(flags_per_row) * usize::from(rows_per_page)) {
+    for flags in flags.chunks(usize::from(
+        u16::from(flags_per_row)
+            .checked_mul(u16::from(rows_per_page))
+            .unwrap(),
+    )) {
         let mut page = Vec::with_capacity(usize::from(rows_per_page));
         for flags in flags.chunks(usize::from(flags_per_row)) {
             page.push(flags);
@@ -491,14 +517,14 @@ fn create_config(
         pages.push(page);
     }
 
-    let print_flag_page = |page, page_num| -> Result<()> {
+    let print_flag_page = |page, page_num: u8| -> Result<()> {
         clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
         print_title_prompt(option_counter, "Let's choose a flag!", color_mode)
             .context("failed to print title prompt")?;
         writeln!(
             io::stdout(),
             "Available flag presets:\nPage: {page_num} of {num_pages}\n",
-            page_num = page_num + 1
+            page_num = page_num.checked_add(1).unwrap()
         )
         .context("failed to write header to stdout")?;
         for &row in page {
@@ -539,7 +565,7 @@ fn create_config(
         print_flag_page(&pages[usize::from(page)], page).context("failed to print flag page")?;
 
         let mut opts: Vec<&str> = <Preset as VariantNames>::VARIANTS.into();
-        if page < num_pages - 1 {
+        if page < num_pages.checked_sub(1).unwrap() {
             opts.push("next");
         }
         if page > 0 {
@@ -563,9 +589,9 @@ fn create_config(
         .context("failed to ask for choice input")
         .context("failed to select preset")?;
         if selection == "next" {
-            page += 1;
+            page = page.checked_add(1).unwrap();
         } else if selection == "prev" {
-            page -= 1;
+            page = page.checked_sub(1).unwrap();
         } else {
             preset = selection.parse().expect("selected preset should be valid");
             debug!(?preset, "selected preset");
@@ -591,17 +617,9 @@ fn create_config(
     //////////////////////////////
     // 4. Dim/lighten colors
 
-    let test_ascii = &TEST_ASCII[1..TEST_ASCII.len() - 1];
-    let test_ascii_width = test_ascii
-        .lines()
-        .map(|line| line.graphemes(true).count())
-        .max()
-        .expect("line iterator should not be empty");
-    let test_ascii_width =
-        u8::try_from(test_ascii_width).expect("`test_ascii_width` should fit in `u8`");
-    let test_ascii_height = test_ascii.lines().count();
-    let test_ascii_height =
-        u8::try_from(test_ascii_height).expect("`test_ascii_height` should fit in `u8`");
+    let test_ascii = &TEST_ASCII[1..TEST_ASCII.len().checked_sub(1).unwrap()];
+    let (test_ascii_width, test_ascii_height) =
+        ascii_size(test_ascii).expect("test ascii should have valid width and height");
 
     let select_lightness = || -> Result<Lightness> {
         clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
@@ -627,8 +645,16 @@ fn create_config(
         // Print cats
         {
             let (Width(term_w), _) = terminal_size().context("failed to get terminal size")?;
-            let num_cols = cmp::max(1, term_w / (u16::from(test_ascii_width) + 2));
-            let num_cols = u8::try_from(num_cols).expect("`num_cols` should fit in `u8`");
+            let num_cols = cmp::max(
+                1,
+                term_w.div_euclid(
+                    NonZeroU16::from(test_ascii_width)
+                        .checked_add(2)
+                        .unwrap()
+                        .get(),
+                ),
+            );
+            let num_cols: u8 = num_cols.try_into().expect("`num_cols` should fit in `u8`");
             const MIN: f32 = 0.15;
             const MAX: f32 = 0.85;
             let ratios =
@@ -661,7 +687,7 @@ fn create_config(
                     asc.lines().map(ToOwned::to_owned).collect()
                 })
                 .collect();
-            for i in 0..usize::from(test_ascii_height) {
+            for i in 0..NonZeroUsize::from(test_ascii_height).get() {
                 let mut line = Vec::new();
                 for lines in &row {
                     line.push(&*lines[i]);
@@ -738,11 +764,22 @@ fn create_config(
     let (ascii_per_row, ascii_rows) = {
         let (Width(term_w), Height(term_h)) =
             terminal_size().context("failed to get terminal size")?;
-        let ascii_per_row = cmp::max(1, term_w / (u16::from(asc_width) + 2));
-        let ascii_per_row =
-            u8::try_from(ascii_per_row).expect("`ascii_per_row` should fit in `u8`");
-        let ascii_rows = cmp::max(1, (term_h - 8) / (u16::from(asc_lines) + 1));
-        let ascii_rows = u8::try_from(ascii_rows).expect("`ascii_rows` should fit in `u8`");
+        let ascii_per_row = cmp::max(
+            1,
+            term_w.div_euclid(NonZeroU16::from(asc_width).checked_add(2).unwrap().get()),
+        );
+        let ascii_per_row: u8 = ascii_per_row
+            .try_into()
+            .expect("`ascii_per_row` should fit in `u8`");
+        let ascii_rows = cmp::max(
+            1,
+            term_h
+                .saturating_sub(8)
+                .div_euclid(NonZeroU16::from(asc_lines).checked_add(1).unwrap().get()),
+        );
+        let ascii_rows: u8 = ascii_rows
+            .try_into()
+            .expect("`ascii_rows` should fit in `u8`");
         (ascii_per_row, ascii_rows)
     };
 
@@ -770,7 +807,9 @@ fn create_config(
                 .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
             ac.find_iter(&asc)
                 .map(|m| {
-                    asc[m.start() + 3..m.end() - 1]
+                    let ai_start = m.start().checked_add(3).unwrap();
+                    let ai_end = m.end().checked_sub(1).unwrap();
+                    asc[ai_start..ai_end]
                         .parse()
                         .expect("neofetch ascii color index should not be invalid")
                 })
@@ -783,11 +822,13 @@ fn create_config(
             .into_iter()
             .permutations(slots.len())
             .collect();
-        let random_count = cmp::max(
-            0,
-            usize::from(ascii_per_row) * usize::from(ascii_rows) - arrangements.len(),
-        );
-        let random_count = u8::try_from(random_count).expect("`random_count` should fit in `u8`");
+        let random_count = u16::from(ascii_per_row)
+            .checked_mul(u16::from(ascii_rows))
+            .unwrap()
+            .saturating_sub(u8::try_from(arrangements.len()).unwrap().into());
+        let random_count: u8 = random_count
+            .try_into()
+            .expect("`random_count` should fit in `u8`");
         let choices: IndexSet<Vec<PresetIndexedColor>> =
             if usize::from(random_count) > preset_index_permutations.len() {
                 preset_index_permutations
@@ -824,7 +865,7 @@ fn create_config(
                     .collect();
                 v.push(format!(
                     "{k:^asc_width$}",
-                    asc_width = usize::from(asc_width)
+                    asc_width = NonZeroUsize::from(asc_width).get()
                 ));
                 Ok(v)
             })
@@ -834,7 +875,7 @@ fn create_config(
             let row: Vec<Vec<String>> = row.collect();
 
             // Print by row
-            for i in 0..usize::from(asc_lines) + 1 {
+            for i in 0..NonZeroUsize::from(asc_lines).checked_add(1).unwrap().get() {
                 let mut line = Vec::new();
                 for lines in &row {
                     line.push(&*lines[i]);
@@ -969,6 +1010,15 @@ fn create_config(
     let save = literal_input("Save config?", &["y", "n"], "y", true, color_mode)
         .context("failed to ask for choice input")?;
     if save == "y" {
+        match path.parent().context("invalid config file path")? {
+            parent_path if parent_path != Path::new("") => {
+                fs::create_dir_all(parent_path)
+                    .with_context(|| format!("failed to create dir {parent_path:?}"))?;
+            },
+            _ => {
+                // Nothing to do if it's a relative path with one component
+            },
+        }
         let file = File::options()
             .write(true)
             .create(true)
