@@ -492,7 +492,7 @@ impl ColorProfile {
             ));
         }
 
-        let mut weighted_colors = vec![];
+        let mut weighted_colors = Vec::new();
 
         for (i, w) in weights.into_iter().enumerate() {
             weighted_colors.extend(iter::repeat(self.colors[i]).take(usize::from(w)));
