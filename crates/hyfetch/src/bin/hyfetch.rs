@@ -12,6 +12,7 @@ use anyhow::{Context as _, Result};
 use deranged::RangedU8;
 use enterpolation::bspline::BSpline;
 use enterpolation::{Curve as _, Generator as _};
+use hyfetch::ascii::RawAsciiArt;
 use hyfetch::cli_options::options;
 use hyfetch::color_util::{
     clear_screen, color, printc, ContrastGrayscale as _, ForegroundBackground, Lightness,
@@ -60,7 +61,8 @@ fn main() -> Result<()> {
 
     if options.test_print {
         let (asc, _) = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
-        writeln!(io::stdout(), "{asc}").context("failed to write ascii to stdout")?;
+        writeln!(io::stdout(), "{asc}", asc = asc.art)
+            .context("failed to write ascii to stdout")?;
         return Ok(());
     }
 
@@ -127,13 +129,16 @@ fn main() -> Result<()> {
 
     let (asc, fore_back) = if let Some(path) = options.ascii_file {
         (
-            fs::read_to_string(&path)
-                .with_context(|| format!("failed to read ascii from {path:?}"))?,
+            RawAsciiArt {
+                art: fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read ascii from {path:?}"))?,
+            },
             None,
         )
     } else {
         get_distro_ascii(distro, backend).context("failed to get distro ascii")?
     };
+    let asc = asc.to_normalized().context("failed to normalize ascii")?;
     let color_align = if fore_back.is_some() {
         match config.color_align {
             ColorAlignment::Horizontal { .. } => ColorAlignment::Horizontal { fore_back },
@@ -143,8 +148,8 @@ fn main() -> Result<()> {
     } else {
         config.color_align
     };
-    let asc = color_align
-        .recolor_ascii(asc, &color_profile, color_mode, theme)
+    let asc = asc
+        .to_recolored(&color_align, &color_profile, color_mode, theme)
         .context("failed to recolor ascii")?;
     neofetch_util::run(asc, backend, args)?;
 
@@ -226,7 +231,7 @@ fn create_config(
 
     let (asc, fore_back) =
         get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
-    let (asc_width, asc_lines) = ascii_size(&asc).context("failed to get ascii size")?;
+    let asc = asc.to_normalized().context("failed to normalize ascii")?;
     let theme = det_bg.map(|bg| bg.theme()).unwrap_or(TerminalTheme::Light);
     let color_mode = det_ansi.unwrap_or(AnsiMode::Ansi256);
     let mut title = format!(
@@ -272,7 +277,7 @@ fn create_config(
         let (Width(term_w), Height(term_h)) =
             terminal_size().context("failed to get terminal size")?;
         let (term_w_min, term_h_min) = (
-            NonZeroU16::from(asc_width)
+            NonZeroU16::from(asc.w)
                 .checked_mul(NonZeroU16::new(2).unwrap())
                 .unwrap()
                 .checked_add(4)
@@ -666,15 +671,21 @@ fn create_config(
                     });
             let row: Vec<Vec<String>> = ratios
                 .map(|r| {
-                    let asc = color_align
-                        .recolor_ascii(
-                            test_ascii.replace(
-                                "{txt}",
-                                &format!(
-                                    "{lightness:^5}",
-                                    lightness = format!("{lightness:.0}%", lightness = r * 100.0)
-                                ),
+                    let asc = RawAsciiArt {
+                        art: test_ascii.replace(
+                            "{txt}",
+                            &format!(
+                                "{lightness:^5}",
+                                lightness = format!("{lightness:.0}%", lightness = r * 100.0)
                             ),
+                        ),
+                    };
+                    let asc = asc
+                        .to_normalized()
+                        .expect("normalizing test ascii should not fail");
+                    let asc = asc
+                        .to_recolored(
+                            &color_align,
                             &color_profile.with_lightness_adaptive(
                                 Lightness::new(r)
                                     .expect("generated lightness should not be invalid"),
@@ -684,7 +695,7 @@ fn create_config(
                             theme,
                         )
                         .expect("recoloring test ascii should not fail");
-                    asc.lines().map(ToOwned::to_owned).collect()
+                    asc.lines
                 })
                 .collect();
             for i in 0..NonZeroUsize::from(test_ascii_height).get() {
@@ -766,7 +777,7 @@ fn create_config(
             terminal_size().context("failed to get terminal size")?;
         let ascii_per_row = cmp::max(
             1,
-            term_w.div_euclid(NonZeroU16::from(asc_width).checked_add(2).unwrap().get()),
+            term_w.div_euclid(NonZeroU16::from(asc.w).checked_add(2).unwrap().get()),
         );
         let ascii_per_row: u8 = ascii_per_row
             .try_into()
@@ -775,7 +786,7 @@ fn create_config(
             1,
             term_h
                 .saturating_sub(8)
-                .div_euclid(NonZeroU16::from(asc_lines).checked_add(1).unwrap().get()),
+                .div_euclid(NonZeroU16::from(asc.h).checked_add(1).unwrap().get()),
         );
         let ascii_rows: u8 = ascii_rows
             .try_into()
@@ -792,6 +803,21 @@ fn create_config(
     let mut arrangements: IndexMap<Cow<str>, ColorAlignment> =
         hv_arrangements.map(|(k, ca)| (k.into(), ca)).into();
 
+    let slots: IndexSet<NeofetchAsciiIndexedColor> = {
+        let asc = asc.lines.join("\n");
+        let ac =
+            NEOFETCH_COLORS_AC.get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+        ac.find_iter(&asc)
+            .map(|m| {
+                let ai_start = m.start().checked_add(3).unwrap();
+                let ai_end = m.end().checked_sub(1).unwrap();
+                asc[ai_start..ai_end]
+                    .parse()
+                    .expect("neofetch ascii color index should not be invalid")
+            })
+            .collect()
+    };
+
     // Loop for random rolling
     let mut rng = fastrand::Rng::new();
     loop {
@@ -802,19 +828,6 @@ fn create_config(
             (0..color_profile.unique_colors().colors.len())
                 .map(|pi| u8::try_from(pi).expect("`pi` should fit in `u8`").into())
                 .collect();
-        let slots: IndexSet<NeofetchAsciiIndexedColor> = {
-            let ac = NEOFETCH_COLORS_AC
-                .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
-            ac.find_iter(&asc)
-                .map(|m| {
-                    let ai_start = m.start().checked_add(3).unwrap();
-                    let ai_end = m.end().checked_sub(1).unwrap();
-                    asc[ai_start..ai_end]
-                        .parse()
-                        .expect("neofetch ascii color index should not be invalid")
-                })
-                .collect()
-        };
         while preset_indices.len() < slots.len() {
             preset_indices.extend_from_within(0..);
         }
@@ -857,15 +870,13 @@ fn create_config(
         let asciis: Vec<Vec<String>> = arrangements
             .iter()
             .map(|(k, ca)| {
-                let mut v: Vec<String> = ca
-                    .recolor_ascii(&asc, &color_profile, color_mode, theme)
+                let mut v: Vec<String> = asc
+                    .to_recolored(ca, &color_profile, color_mode, theme)
                     .context("failed to recolor ascii")?
-                    .lines()
-                    .map(ToOwned::to_owned)
-                    .collect();
+                    .lines;
                 v.push(format!(
                     "{k:^asc_width$}",
-                    asc_width = NonZeroUsize::from(asc_width).get()
+                    asc_width = NonZeroUsize::from(asc.w).get()
                 ));
                 Ok(v)
             })
@@ -875,7 +886,7 @@ fn create_config(
             let row: Vec<Vec<String>> = row.collect();
 
             // Print by row
-            for i in 0..NonZeroUsize::from(asc_lines).checked_add(1).unwrap().get() {
+            for i in 0..NonZeroUsize::from(asc.h).checked_add(1).unwrap().get() {
                 let mut line = Vec::new();
                 for lines in &row {
                     line.push(&*lines[i]);
