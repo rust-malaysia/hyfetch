@@ -6,6 +6,7 @@ use std::fs;
 #[cfg(windows)]
 use std::io;
 use std::io::{self, Write as _};
+use std::num::{NonZeroU8, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -116,7 +117,7 @@ impl ColorAlignment {
                 // Add new colors
                 let asc = {
                     let ColorProfile { colors } = {
-                        let (_, length) = ascii_size(&asc);
+                        let (_, length) = ascii_size(&asc).context("failed to get ascii size")?;
                         color_profile
                             .with_length(length)
                             .context("failed to spread color profile to length")?
@@ -155,7 +156,7 @@ impl ColorAlignment {
                     .context("failed to fill in starting neofetch color codes")?;
 
                 let color_profile = {
-                    let (length, _) = ascii_size(&asc);
+                    let (length, _) = ascii_size(&asc).context("failed to get ascii size")?;
                     color_profile
                         .with_length(length)
                         .context("failed to spread color profile to length")?
@@ -169,17 +170,21 @@ impl ColorAlignment {
                         .map(|line| {
                             let mut matches = ac.find_iter(line).peekable();
                             let mut dst = String::new();
-                            let mut offset = 0;
+                            let mut offset: u8 = 0;
                             loop {
                                 let current = matches.next();
                                 let next = matches.peek();
                                 let (neofetch_color_idx, span, done) = match (current, next) {
                                     (Some(m), Some(m_next)) => {
+                                        let ai_start = m.start().checked_add(3).unwrap();
+                                        let ai_end = m.end().checked_sub(1).unwrap();
                                         let neofetch_color_idx: NeofetchAsciiIndexedColor = line
-                                            [m.start() + 3..m.end() - 1]
+                                            [ai_start..ai_end]
                                             .parse()
                                             .expect("neofetch color index should be valid");
-                                        offset += m.len();
+                                        offset = offset
+                                            .checked_add(u8::try_from(m.len()).unwrap())
+                                            .unwrap();
                                         let mut span = m.span();
                                         span.start = m.end();
                                         span.end = m_next.start();
@@ -187,11 +192,15 @@ impl ColorAlignment {
                                     },
                                     (Some(m), None) => {
                                         // Last color code
+                                        let ai_start = m.start().checked_add(3).unwrap();
+                                        let ai_end = m.end().checked_sub(1).unwrap();
                                         let neofetch_color_idx: NeofetchAsciiIndexedColor = line
-                                            [m.start() + 3..m.end() - 1]
+                                            [ai_start..ai_end]
                                             .parse()
                                             .expect("neofetch color index should be valid");
-                                        offset += m.len();
+                                        offset = offset
+                                            .checked_add(u8::try_from(m.len()).unwrap())
+                                            .unwrap();
                                         let mut span = m.span();
                                         span.start = m.end();
                                         span.end = line.len();
@@ -218,10 +227,13 @@ impl ColorAlignment {
                                     .expect("foreground color should not be invalid");
                                     write!(dst, "{fore}{txt}{reset}").unwrap();
                                 } else if neofetch_color_idx == back {
+                                    let adjusted_start =
+                                        span.start.checked_sub(usize::from(offset)).unwrap();
+                                    let adjusted_end =
+                                        span.end.checked_sub(usize::from(offset)).unwrap();
                                     dst.push_str(
                                         &ColorProfile::new(Vec::from(
-                                            &color_profile.colors
-                                                [span.start - offset..span.end - offset],
+                                            &color_profile.colors[adjusted_start..adjusted_end],
                                         ))
                                         .color_text(
                                             txt,
@@ -265,7 +277,8 @@ impl ColorAlignment {
                 match self {
                     Self::Horizontal { .. } => {
                         let ColorProfile { colors } = {
-                            let (_, length) = ascii_size(&asc);
+                            let (_, length) =
+                                ascii_size(&asc).context("failed to get ascii size")?;
                             color_profile
                                 .with_length(length)
                                 .context("failed to spread color profile to length")?
@@ -314,11 +327,12 @@ impl ColorAlignment {
                     const N: usize = NEOFETCH_COLOR_PATTERNS.len();
                     let mut replacements = vec![Cow::from(""); N];
                     for (&ai, &pi) in custom_colors {
-                        let ai = u8::from(ai);
-                        let pi = u8::from(pi);
-                        replacements[usize::from(ai - 1)] = colors[usize::from(pi)]
-                            .to_ansi_string(color_mode, ForegroundBackground::Foreground)
-                            .into();
+                        let ai: u8 = ai.into();
+                        let pi: u8 = pi.into();
+                        replacements[usize::from(ai.checked_sub(1).unwrap())] = colors
+                            [usize::from(pi)]
+                        .to_ansi_string(color_mode, ForegroundBackground::Foreground)
+                        .into();
                     }
                     ac.replace_all(&asc, &replacements)
                 };
@@ -603,7 +617,7 @@ where
     // Try new codegen-based detection method
     if let Some(distro) = Distro::detect(&distro) {
         return Ok((
-            normalize_ascii(distro.ascii_art()),
+            normalize_ascii(distro.ascii_art()).context("failed to normalize ascii")?,
             ColorAlignment::fore_back(distro),
         ));
     }
@@ -618,7 +632,10 @@ where
     // printf
     let asc = asc.replace(r"\\", r"\");
 
-    Ok((normalize_ascii(asc), None))
+    Ok((
+        normalize_ascii(asc).context("failed to normalize ascii")?,
+        None,
+    ))
 }
 
 #[tracing::instrument(level = "debug", skip(asc))]
@@ -640,7 +657,7 @@ pub fn run(asc: String, backend: Backend, args: Option<&Vec<String>>) -> Result<
 }
 
 /// Gets distro ascii width and height, ignoring color code.
-pub fn ascii_size<S>(asc: S) -> (u8, u8)
+pub fn ascii_size<S>(asc: S) -> Result<(NonZeroU8, NonZeroU8)>
 where
     S: AsRef<str>,
 {
@@ -659,29 +676,43 @@ where
         .map(|line| line.graphemes(true).count())
         .max()
         .expect("line iterator should not be empty");
-    let width = u8::try_from(width).expect("`width` should fit in `u8`");
+    let width: NonZeroUsize = width.try_into().context("`asc` should not be empty")?;
+    let width: NonZeroU8 = width.try_into().with_context(|| {
+        format!(
+            "`asc` should not have more than {limit} characters per line",
+            limit = u8::MAX
+        )
+    })?;
     let height = asc.lines().count();
-    let height = u8::try_from(height).expect("`height` should fit in `u8`");
+    let height: NonZeroUsize = height.try_into().context("`asc` should not be empty")?;
+    let height: NonZeroU8 = height.try_into().with_context(|| {
+        format!(
+            "`asc` should not have more than {limit} lines",
+            limit = u8::MAX
+        )
+    })?;
 
-    (width, height)
+    Ok((width, height))
 }
 
 /// Makes sure every line are the same width.
-fn normalize_ascii<S>(asc: S) -> String
+fn normalize_ascii<S>(asc: S) -> Result<String>
 where
     S: AsRef<str>,
 {
     let asc = asc.as_ref();
 
-    let (w, _) = ascii_size(asc);
+    let (w, _) = ascii_size(asc).context("failed to get ascii size")?;
 
-    asc.lines()
+    let asc = asc
+        .lines()
         .map(|line| {
-            let (line_w, _) = ascii_size(line);
-            let pad = " ".repeat(usize::from(w - line_w));
+            let (line_w, _) = ascii_size(line).unwrap();
+            let pad = " ".repeat(usize::from(w.get().checked_sub(line_w.get()).unwrap()));
             format!("{line}{pad}")
         })
-        .join("\n")
+        .join("\n");
+    Ok(asc)
 }
 
 /// Fills the missing starting placeholders.

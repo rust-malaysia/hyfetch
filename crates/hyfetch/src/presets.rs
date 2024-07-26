@@ -1,4 +1,5 @@
 use std::iter;
+use std::num::{NonZeroU8, NonZeroUsize};
 
 use anyhow::{anyhow, Context as _, Result};
 use indexmap::IndexSet;
@@ -456,7 +457,7 @@ impl Preset {
                 "#6F0A82",
             ]),
         })
-        .expect("preset color profiles should not be invalid")
+        .expect("preset color profiles should be valid")
     }
 }
 
@@ -502,34 +503,42 @@ impl ColorProfile {
 
     /// Creates a new color profile, with the colors spread to the specified
     /// length.
-    pub fn with_length(&self, length: u8) -> Result<Self> {
+    pub fn with_length(&self, length: NonZeroU8) -> Result<Self> {
         let orig_len = self.colors.len();
-        let orig_len = u8::try_from(orig_len).expect("`orig_len` should fit in `u8`");
+        let orig_len: NonZeroUsize = orig_len.try_into().expect("`colors` should not be empty");
+        let orig_len: NonZeroU8 = orig_len
+            .try_into()
+            .expect("`colors` should not have more than 255 elements");
         // TODO: I believe weird things can happen because of this...
         // if length < orig_len {
         //     unimplemented!("compressing length of color profile not implemented");
         // }
-        let center_i = usize::from(orig_len / 2);
+        let center_i = usize::from(orig_len.get() / 2);
 
         // How many copies of each color should be displayed at least?
-        let repeats = length / orig_len;
-        let mut weights = vec![repeats; usize::from(orig_len)];
+        let repeats = length.get().div_euclid(orig_len.get());
+        let mut weights = vec![repeats; NonZeroUsize::from(orig_len).get()];
 
         // How many extra spaces left?
-        let mut extras = length % orig_len;
+        let mut extras = length.get().rem_euclid(orig_len.get());
 
         // If there is an odd space left, extend the center by one space
         if extras % 2 == 1 {
-            weights[center_i] += 1;
-            extras -= 1;
+            weights[center_i] = weights[center_i].checked_add(1).unwrap();
+            extras = extras.checked_sub(1).unwrap();
         }
 
         // Add weight to border until there's no space left (extras must be even at this
         // point)
         let weights_len = weights.len();
         for border_i in 0..usize::from(extras / 2) {
-            weights[border_i] += 1;
-            weights[weights_len - border_i - 1] += 1;
+            weights[border_i] = weights[border_i].checked_add(1).unwrap();
+            let border_opp = weights_len
+                .checked_sub(border_i)
+                .unwrap()
+                .checked_sub(1)
+                .unwrap();
+            weights[border_opp] = weights[border_opp].checked_add(1).unwrap();
         }
 
         self.with_weights(weights)
@@ -558,7 +567,13 @@ impl ColorProfile {
 
         let ColorProfile { colors } = {
             let length = txt.len();
-            let length = u8::try_from(length).expect("`length` should fit in `u8`");
+            let length: NonZeroUsize = length.try_into().context("`txt` should not be empty")?;
+            let length: NonZeroU8 = length.try_into().with_context(|| {
+                format!(
+                    "`txt` should not have more than {limit} characters",
+                    limit = u8::MAX
+                )
+            })?;
             self.with_length(length)
                 .with_context(|| format!("failed to spread color profile to length {length}"))?
         };
@@ -566,7 +581,7 @@ impl ColorProfile {
         let mut buf = String::new();
         for (i, &gr) in txt.iter().enumerate() {
             if space_only && gr != " " {
-                if i > 0 && txt[i - 1] == " " {
+                if i > 0 && txt[i.checked_sub(1).unwrap()] == " " {
                     buf.push_str("\x1b[39;49m");
                 }
                 buf.push_str(gr);

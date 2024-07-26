@@ -53,3 +53,6 @@ default = ["autocomplete", "color", "macchina"]
 autocomplete = ["bpaf/autocomplete"]
 color = ["bpaf/dull-color"]
 macchina = ["dep:anstream", "dep:toml_edit", "toml_edit/display"]
+
+[lints]
+workspace = true
