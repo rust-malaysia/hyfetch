@@ -93,7 +93,7 @@ impl Distro {
 
     for (variant, AsciiDistro { pattern, .. }) in &variants {
         let patterns = pattern.split('|').map(|s| s.trim());
-        let mut conds = vec![];
+        let mut conds = Vec::new();
 
         for m in patterns {
             let stripped = m.trim_matches(['*', '\'', '"']).to_lowercase();
@@ -214,7 +214,7 @@ where
     let eof_re = Regex::new(r"EOF[ \n]*?;;").expect("couldn't compile eof regex");
 
     // Split by blocks
-    let mut blocks = vec![];
+    let mut blocks = Vec::new();
     for b in case_re.split(&nf) {
         blocks.extend(eof_re.split(b).map(|sub| sub.trim()));
     }

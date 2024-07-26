@@ -51,69 +51,18 @@ pub const NEOFETCH_COLOR_PATTERNS: [&str; 6] =
     ["${c1}", "${c2}", "${c3}", "${c4}", "${c5}", "${c6}"];
 pub static NEOFETCH_COLORS_AC: OnceLock<AhoCorasick> = OnceLock::new();
 
-type ForeBackColorPair = (NeofetchAsciiIndexedColor, NeofetchAsciiIndexedColor);
-
 #[derive(Clone, Eq, PartialEq, Debug, AsRefStr, Deserialize, Serialize)]
 #[serde(tag = "mode")]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum ColorAlignment {
-    Horizontal {
-        #[serde(skip)]
-        fore_back: Option<ForeBackColorPair>,
-    },
-    Vertical {
-        #[serde(skip)]
-        fore_back: Option<ForeBackColorPair>,
-    },
+    Horizontal,
+    Vertical,
     Custom {
         #[serde(rename = "custom_colors")]
         #[serde(deserialize_with = "crate::utils::index_map_serde::deserialize")]
         colors: IndexMap<NeofetchAsciiIndexedColor, PresetIndexedColor>,
     },
-}
-
-impl ColorAlignment {
-    /// Gets recommended foreground-background configuration for distro, or
-    /// `None` if the distro ascii is not suitable for fore-back configuration.
-    fn fore_back(distro: Distro) -> Option<ForeBackColorPair> {
-        match distro {
-            Distro::Anarchy
-            | Distro::ArchStrike
-            | Distro::Astra_Linux
-            | Distro::Chapeau
-            | Distro::Fedora
-            | Distro::GalliumOS
-            | Distro::KrassOS
-            | Distro::Kubuntu
-            | Distro::Lubuntu
-            | Distro::openEuler
-            | Distro::Peppermint
-            | Distro::Pop__OS
-            | Distro::Ubuntu_Cinnamon
-            | Distro::Ubuntu_Kylin
-            | Distro::Ubuntu_MATE
-            | Distro::Ubuntu_old
-            | Distro::Ubuntu_Studio
-            | Distro::Ubuntu_Sway
-            | Distro::Ultramarine_Linux
-            | Distro::Univention
-            | Distro::Vanilla
-            | Distro::Xubuntu => Some((2, 1)),
-
-            Distro::Antergos => Some((1, 2)),
-
-            _ => None,
-        }
-        .map(|(fore, back): (u8, u8)| {
-            (
-                fore.try_into()
-                    .expect("`fore` should be a valid neofetch color index"),
-                back.try_into()
-                    .expect("`back` should be a valid neofetch color index"),
-            )
-        })
-    }
 }
 
 /// Asks the user to provide an input among a list of options.
@@ -325,10 +274,7 @@ pub fn macchina_path() -> Result<Option<PathBuf>> {
 /// Gets the distro ascii of the current distro. Or if distro is specified, get
 /// the specific distro's ascii art instead.
 #[tracing::instrument(level = "debug")]
-pub fn get_distro_ascii<S>(
-    distro: Option<S>,
-    backend: Backend,
-) -> Result<(RawAsciiArt, Option<ForeBackColorPair>)>
+pub fn get_distro_ascii<S>(distro: Option<S>, backend: Backend) -> Result<RawAsciiArt>
 where
     S: AsRef<str> + fmt::Debug,
 {
@@ -343,12 +289,10 @@ where
 
     // Try new codegen-based detection method
     if let Some(distro) = Distro::detect(&distro) {
-        return Ok((
-            RawAsciiArt {
-                art: distro.ascii_art().to_owned(),
-            },
-            ColorAlignment::fore_back(distro),
-        ));
+        let asc = distro.ascii_art().to_owned();
+        let (fg, bg) = fore_back(&distro);
+
+        return Ok(RawAsciiArt { asc, fg, bg });
     }
 
     debug!(%distro, "could not find a match for distro; falling back to neofetch");
@@ -361,7 +305,11 @@ where
     // printf
     let asc = asc.replace(r"\\", r"\");
 
-    Ok((RawAsciiArt { art: asc }, None))
+    Ok(RawAsciiArt {
+        asc,
+        fg: Vec::new(),
+        bg: Vec::new(),
+    })
 }
 
 #[tracing::instrument(level = "debug", skip(asc), fields(asc.w = asc.w, asc.h = asc.h))]
@@ -877,4 +825,54 @@ fn run_macchina(asc: String, args: Option<&Vec<String>>) -> Result<()> {
     process_command_status(&status).context("macchina command exited with error")?;
 
     Ok(())
+}
+
+/// Gets recommended foreground-background configuration for distro.
+fn fore_back(
+    distro: &Distro,
+) -> (
+    Vec<NeofetchAsciiIndexedColor>,
+    Vec<NeofetchAsciiIndexedColor>,
+) {
+    let (fg, bg): (Vec<u8>, Vec<u8>) = match distro {
+        Distro::Anarchy => (vec![2], vec![1]),
+        Distro::Antergos => (vec![1], vec![2]),
+        Distro::ArchStrike => (vec![2], vec![1]),
+        Distro::Astra_Linux => (vec![2], vec![1]),
+        Distro::Chapeau => (vec![2], vec![1]),
+        Distro::Fedora => (vec![2], vec![1]),
+        Distro::Fedora_Silverblue => (vec![2], vec![1, 3]),
+        Distro::GalliumOS => (vec![2], vec![1]),
+        Distro::KrassOS => (vec![2], vec![1]),
+        Distro::Kubuntu => (vec![2], vec![1]),
+        Distro::Lubuntu => (vec![2], vec![1]),
+        Distro::openEuler => (vec![2], vec![1]),
+        Distro::Peppermint => (vec![2], vec![1]),
+        Distro::Pop__OS => (vec![2], vec![1]),
+        Distro::Ubuntu_Cinnamon => (vec![2], vec![1]),
+        Distro::Ubuntu_Kylin => (vec![2], vec![1]),
+        Distro::Ubuntu_MATE => (vec![2], vec![1]),
+        Distro::Ubuntu_old => (vec![2], vec![1]),
+        Distro::Ubuntu_Studio => (vec![2], vec![1]),
+        Distro::Ubuntu_Sway => (vec![2], vec![1]),
+        Distro::Ultramarine_Linux => (vec![2], vec![1]),
+        Distro::Univention => (vec![2], vec![1]),
+        Distro::Vanilla => (vec![2], vec![1]),
+        Distro::Xubuntu => (vec![2], vec![1]),
+        _ => (Vec::new(), Vec::new()),
+    };
+    (
+        fg.into_iter()
+            .map(|fore| {
+                fore.try_into()
+                    .expect("`fore` should be a valid neofetch color index")
+            })
+            .collect(),
+        bg.into_iter()
+            .map(|back| {
+                back.try_into()
+                    .expect("`back` should be a valid neofetch color index")
+            })
+            .collect(),
+    )
 }

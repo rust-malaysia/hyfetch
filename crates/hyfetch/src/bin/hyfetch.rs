@@ -60,8 +60,8 @@ fn main() -> Result<()> {
     let backend = options.backend.unwrap_or(Backend::Neofetch);
 
     if options.test_print {
-        let (asc, _) = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
-        writeln!(io::stdout(), "{asc}", asc = asc.art)
+        let asc = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
+        writeln!(io::stdout(), "{asc}", asc = asc.asc)
             .context("failed to write ascii to stdout")?;
         return Ok(());
     }
@@ -127,27 +127,18 @@ fn main() -> Result<()> {
     };
     debug!(?color_profile, "lightened color profile");
 
-    let (asc, fore_back) = if let Some(path) = options.ascii_file {
-        (
-            RawAsciiArt {
-                art: fs::read_to_string(&path)
-                    .with_context(|| format!("failed to read ascii from {path:?}"))?,
-            },
-            None,
-        )
+    let asc = if let Some(path) = options.ascii_file {
+        RawAsciiArt {
+            asc: fs::read_to_string(&path)
+                .with_context(|| format!("failed to read ascii from {path:?}"))?,
+            fg: Vec::new(),
+            bg: Vec::new(),
+        }
     } else {
         get_distro_ascii(distro, backend).context("failed to get distro ascii")?
     };
     let asc = asc.to_normalized().context("failed to normalize ascii")?;
-    let color_align = if fore_back.is_some() {
-        match config.color_align {
-            ColorAlignment::Horizontal { .. } => ColorAlignment::Horizontal { fore_back },
-            ColorAlignment::Vertical { .. } => ColorAlignment::Vertical { fore_back },
-            ca @ ColorAlignment::Custom { .. } => ca,
-        }
-    } else {
-        config.color_align
-    };
+    let color_align = config.color_align;
     let asc = asc
         .to_recolored(&color_align, &color_profile, color_mode, theme)
         .context("failed to recolor ascii")?;
@@ -229,8 +220,7 @@ fn create_config(
     });
     debug!(?det_ansi, "detected color mode");
 
-    let (asc, fore_back) =
-        get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
+    let asc = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
     let asc = asc.to_normalized().context("failed to normalize ascii")?;
     let theme = det_bg.map(|bg| bg.theme()).unwrap_or(TerminalTheme::Light);
     let color_mode = det_ansi.unwrap_or(AnsiMode::Ansi256);
@@ -645,7 +635,7 @@ fn create_config(
         )
         .context("failed to write message to stdout")?;
 
-        let color_align = ColorAlignment::Horizontal { fore_back: None };
+        let color_align = ColorAlignment::Horizontal;
 
         // Print cats
         {
@@ -672,13 +662,15 @@ fn create_config(
             let row: Vec<Vec<String>> = ratios
                 .map(|r| {
                     let asc = RawAsciiArt {
-                        art: test_ascii.replace(
+                        asc: test_ascii.replace(
                             "{txt}",
                             &format!(
                                 "{lightness:^5}",
                                 lightness = format!("{lightness:.0}%", lightness = r * 100.0)
                             ),
                         ),
+                        fg: Vec::new(),
+                        bg: Vec::new(),
                     };
                     let asc = asc
                         .to_normalized()
@@ -797,8 +789,8 @@ fn create_config(
     // Displays horizontal and vertical arrangements in the first iteration, but
     // hide them in later iterations
     let hv_arrangements = [
-        ("Horizontal", ColorAlignment::Horizontal { fore_back }),
-        ("Vertical", ColorAlignment::Vertical { fore_back }),
+        ("Horizontal", ColorAlignment::Horizontal),
+        ("Vertical", ColorAlignment::Vertical),
     ];
     let mut arrangements: IndexMap<Cow<str>, ColorAlignment> =
         hv_arrangements.map(|(k, ca)| (k.into(), ca)).into();

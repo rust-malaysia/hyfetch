@@ -19,7 +19,9 @@ use crate::types::{AnsiMode, TerminalTheme};
 /// Raw ascii art before any processing.
 #[derive(Clone, Debug)]
 pub struct RawAsciiArt {
-    pub art: String,
+    pub asc: String,
+    pub fg: Vec<NeofetchAsciiIndexedColor>,
+    pub bg: Vec<NeofetchAsciiIndexedColor>,
 }
 
 /// Normalized ascii art where every line has the same width.
@@ -28,6 +30,8 @@ pub struct NormalizedAsciiArt {
     pub lines: Vec<String>,
     pub w: NonZeroU8,
     pub h: NonZeroU8,
+    pub fg: Vec<NeofetchAsciiIndexedColor>,
+    pub bg: Vec<NeofetchAsciiIndexedColor>,
 }
 
 /// Recolored ascii art with all color codes replaced.
@@ -44,11 +48,10 @@ impl RawAsciiArt {
     pub fn to_normalized(&self) -> Result<NormalizedAsciiArt> {
         debug!("normalize ascii");
 
-        let asc = &self.art;
+        let (w, h) = ascii_size(&self.asc).context("failed to get ascii size")?;
 
-        let (w, h) = ascii_size(asc).context("failed to get ascii size")?;
-
-        let lines = asc
+        let lines = self
+            .asc
             .lines()
             .map(|line| {
                 let (line_w, _) = ascii_size(line).unwrap();
@@ -57,7 +60,13 @@ impl RawAsciiArt {
             })
             .collect();
 
-        Ok(NormalizedAsciiArt { lines, w, h })
+        Ok(NormalizedAsciiArt {
+            lines,
+            w,
+            h,
+            fg: self.fg.clone(),
+            bg: self.bg.clone(),
+        })
     }
 }
 
@@ -75,28 +84,34 @@ impl NormalizedAsciiArt {
 
         let reset = color("&~&*", color_mode).expect("color reset should not be invalid");
 
-        let lines = match color_align {
-            &ColorAlignment::Horizontal {
-                fore_back: Some((fore, back)),
-            } => {
+        let lines = match (color_align, self) {
+            (ColorAlignment::Horizontal, Self { fg, bg, .. })
+                if !fg.is_empty() || !bg.is_empty() =>
+            {
                 let Self { lines, .. } = self
                     .fill_starting()
                     .context("failed to fill in starting neofetch color codes")?;
 
+                let ac = NEOFETCH_COLORS_AC
+                    .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+
                 // Replace foreground colors
                 let asc = {
                     let asc = lines.join("\n");
-                    asc.replace(
-                        &format!("${{c{fore}}}", fore = u8::from(fore)),
-                        &color(
-                            match theme {
-                                TerminalTheme::Light => "&0",
-                                TerminalTheme::Dark => "&f",
-                            },
-                            color_mode,
-                        )
-                        .expect("foreground color should not be invalid"),
+                    let mut replacements = NEOFETCH_COLOR_PATTERNS;
+                    let fg_color = color(
+                        match theme {
+                            TerminalTheme::Light => "&0",
+                            TerminalTheme::Dark => "&f",
+                        },
+                        color_mode,
                     )
+                    .expect("foreground color should not be invalid");
+                    for &fore in fg {
+                        replacements[usize::from(u8::from(fore)).checked_sub(1).unwrap()] =
+                            &fg_color;
+                    }
+                    ac.replace_all(&asc, &replacements)
                 };
                 let lines = asc.lines();
 
@@ -107,15 +122,17 @@ impl NormalizedAsciiArt {
                             format!("failed to spread color profile to length {h}", h = self.h)
                         })?;
                     lines.enumerate().map(move |(i, line)| {
-                        let line = line.replace(
-                            &format!("${{c{back}}}", back = u8::from(back)),
-                            &colors[i].to_ansi_string(color_mode, {
-                                // This is "background" in the ascii art, but foreground text in
-                                // terminal
-                                ForegroundBackground::Foreground
-                            }),
-                        );
-                        format!("{line}{reset}")
+                        let mut replacements = NEOFETCH_COLOR_PATTERNS;
+                        let bg_color = colors[i].to_ansi_string(color_mode, {
+                            // This is "background" in the ascii art, but foreground text in
+                            // terminal
+                            ForegroundBackground::Foreground
+                        });
+                        for &back in bg {
+                            replacements[usize::from(u8::from(back)).checked_sub(1).unwrap()] =
+                                &bg_color;
+                        }
+                        ac.replace_all(line, &replacements)
                     })
                 };
 
@@ -123,19 +140,18 @@ impl NormalizedAsciiArt {
                 let asc = {
                     let mut lines = lines;
                     let asc = lines.join("\n");
-                    let ac = NEOFETCH_COLORS_AC
-                        .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
                     const N: usize = NEOFETCH_COLOR_PATTERNS.len();
-                    const REPLACEMENTS: [&str; N] = [""; N];
-                    ac.replace_all(&asc, &REPLACEMENTS)
+                    let replacements: [&str; N] = [&reset; N];
+                    ac.replace_all(&asc, &replacements)
                 };
                 let lines = asc.lines();
 
-                lines.map(ToOwned::to_owned).collect()
+                // Reset colors at end of each line to prevent color bleeding
+                let lines = lines.map(|line| format!("{line}{reset}"));
+
+                lines.collect()
             },
-            &ColorAlignment::Vertical {
-                fore_back: Some((fore, back)),
-            } => {
+            (ColorAlignment::Vertical, Self { fg, bg, .. }) if !fg.is_empty() || !bg.is_empty() => {
                 let Self { lines, .. } = self
                     .fill_starting()
                     .context("failed to fill in starting neofetch color codes")?;
@@ -201,7 +217,7 @@ impl NormalizedAsciiArt {
                                 };
                                 let txt = &line[span];
 
-                                if neofetch_color_idx == fore {
+                                if fg.contains(&neofetch_color_idx) {
                                     let fore = color(
                                         match theme {
                                             TerminalTheme::Light => "&0",
@@ -211,7 +227,7 @@ impl NormalizedAsciiArt {
                                     )
                                     .expect("foreground color should not be invalid");
                                     write!(dst, "{fore}{txt}{reset}").unwrap();
-                                } else if neofetch_color_idx == back {
+                                } else if bg.contains(&neofetch_color_idx) {
                                     let adjusted_start =
                                         span.start.checked_sub(usize::from(offset)).unwrap();
                                     let adjusted_end =
@@ -247,8 +263,10 @@ impl NormalizedAsciiArt {
 
                 lines
             },
-            ColorAlignment::Horizontal { fore_back: None }
-            | ColorAlignment::Vertical { fore_back: None } => {
+            (ColorAlignment::Horizontal, Self { fg, bg, .. })
+            | (ColorAlignment::Vertical, Self { fg, bg, .. })
+                if fg.is_empty() && bg.is_empty() =>
+            {
                 // Remove existing colors
                 let asc = {
                     let asc = self.lines.join("\n");
@@ -262,7 +280,7 @@ impl NormalizedAsciiArt {
 
                 // Add new colors
                 match color_align {
-                    ColorAlignment::Horizontal { .. } => {
+                    ColorAlignment::Horizontal => {
                         let ColorProfile { colors } =
                             color_profile.with_length(self.h).with_context(|| {
                                 format!("failed to spread color profile to length {h}", h = self.h)
@@ -276,7 +294,7 @@ impl NormalizedAsciiArt {
                             })
                             .collect()
                     },
-                    ColorAlignment::Vertical { .. } => lines
+                    ColorAlignment::Vertical => lines
                         .map(|line| {
                             let line = color_profile
                                 .color_text(
@@ -294,9 +312,12 @@ impl NormalizedAsciiArt {
                     },
                 }
             },
-            ColorAlignment::Custom {
-                colors: custom_colors,
-            } => {
+            (
+                ColorAlignment::Custom {
+                    colors: custom_colors,
+                },
+                _,
+            ) => {
                 let Self { lines, .. } = self
                     .fill_starting()
                     .context("failed to fill in starting neofetch color codes")?;
@@ -326,6 +347,9 @@ impl NormalizedAsciiArt {
                 let lines = lines.map(|line| format!("{line}{reset}"));
 
                 lines.collect()
+            },
+            _ => {
+                unreachable!()
             },
         };
 
@@ -377,6 +401,11 @@ impl NormalizedAsciiArt {
                 })
                 .collect::<Result<_>>()?;
 
-        Ok(Self { lines, ..*self })
+        Ok(Self {
+            lines,
+            fg: self.fg.clone(),
+            bg: self.bg.clone(),
+            ..*self
+        })
     }
 }
