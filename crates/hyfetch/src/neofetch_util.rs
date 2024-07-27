@@ -5,7 +5,6 @@ use std::fs;
 #[cfg(windows)]
 use std::io;
 use std::io::{self, Write as _};
-use std::num::{NonZeroU8, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -290,9 +289,9 @@ where
     // Try new codegen-based detection method
     if let Some(distro) = Distro::detect(&distro) {
         let asc = distro.ascii_art().to_owned();
-        let (fg, bg) = fore_back(&distro);
+        let fg = ascii_foreground(&distro);
 
-        return Ok(RawAsciiArt { asc, fg, bg });
+        return Ok(RawAsciiArt { asc, fg });
     }
 
     debug!(%distro, "could not find a match for distro; falling back to neofetch");
@@ -308,7 +307,6 @@ where
     Ok(RawAsciiArt {
         asc,
         fg: Vec::new(),
-        bg: Vec::new(),
     })
 }
 
@@ -333,11 +331,15 @@ pub fn run(asc: RecoloredAsciiArt, backend: Backend, args: Option<&Vec<String>>)
 }
 
 /// Gets distro ascii width and height, ignoring color code.
-pub fn ascii_size<S>(asc: S) -> Result<(NonZeroU8, NonZeroU8)>
+pub fn ascii_size<S>(asc: S) -> Result<(u8, u8)>
 where
     S: AsRef<str>,
 {
     let asc = asc.as_ref();
+
+    if asc.is_empty() {
+        return Ok((0, 0));
+    }
 
     let asc = {
         let ac =
@@ -347,21 +349,23 @@ where
         ac.replace_all(asc, &REPLACEMENTS)
     };
 
+    if asc.is_empty() {
+        return Ok((0, 0));
+    }
+
     let width = asc
         .lines()
         .map(|line| line.graphemes(true).count())
         .max()
         .expect("line iterator should not be empty");
-    let width: NonZeroUsize = width.try_into().context("`asc` should not be empty")?;
-    let width: NonZeroU8 = width.try_into().with_context(|| {
+    let width: u8 = width.try_into().with_context(|| {
         format!(
             "`asc` should not have more than {limit} characters per line",
             limit = u8::MAX
         )
     })?;
     let height = asc.lines().count();
-    let height: NonZeroUsize = height.try_into().context("`asc` should not be empty")?;
-    let height: NonZeroU8 = height.try_into().with_context(|| {
+    let height: u8 = height.try_into().with_context(|| {
         format!(
             "`asc` should not have more than {limit} lines",
             limit = u8::MAX
@@ -827,52 +831,41 @@ fn run_macchina(asc: String, args: Option<&Vec<String>>) -> Result<()> {
     Ok(())
 }
 
-/// Gets recommended foreground-background configuration for distro.
-fn fore_back(
-    distro: &Distro,
-) -> (
-    Vec<NeofetchAsciiIndexedColor>,
-    Vec<NeofetchAsciiIndexedColor>,
-) {
-    let (fg, bg): (Vec<u8>, Vec<u8>) = match distro {
-        Distro::Anarchy => (vec![2], vec![1]),
-        Distro::Antergos => (vec![1], vec![2]),
-        Distro::ArchStrike => (vec![2], vec![1]),
-        Distro::Astra_Linux => (vec![2], vec![1]),
-        Distro::Chapeau => (vec![2], vec![1]),
-        Distro::Fedora => (vec![2], vec![1]),
-        Distro::Fedora_Silverblue => (vec![2], vec![1, 3]),
-        Distro::GalliumOS => (vec![2], vec![1]),
-        Distro::KrassOS => (vec![2], vec![1]),
-        Distro::Kubuntu => (vec![2], vec![1]),
-        Distro::Lubuntu => (vec![2], vec![1]),
-        Distro::openEuler => (vec![2], vec![1]),
-        Distro::Peppermint => (vec![2], vec![1]),
-        Distro::Pop__OS => (vec![2], vec![1]),
-        Distro::Ubuntu_Cinnamon => (vec![2], vec![1]),
-        Distro::Ubuntu_Kylin => (vec![2], vec![1]),
-        Distro::Ubuntu_MATE => (vec![2], vec![1]),
-        Distro::Ubuntu_old => (vec![2], vec![1]),
-        Distro::Ubuntu_Studio => (vec![2], vec![1]),
-        Distro::Ubuntu_Sway => (vec![2], vec![1]),
-        Distro::Ultramarine_Linux => (vec![2], vec![1]),
-        Distro::Univention => (vec![2], vec![1]),
-        Distro::Vanilla => (vec![2], vec![1]),
-        Distro::Xubuntu => (vec![2], vec![1]),
-        _ => (Vec::new(), Vec::new()),
+/// Gets the color indices that should be considered as foreground, for a
+/// particular distro's ascii art.
+fn ascii_foreground(distro: &Distro) -> Vec<NeofetchAsciiIndexedColor> {
+    let fg: Vec<u8> = match distro {
+        Distro::Anarchy => vec![2],
+        Distro::Antergos => vec![1],
+        Distro::ArchStrike => vec![2],
+        Distro::Astra_Linux => vec![2],
+        Distro::Chapeau => vec![2],
+        Distro::Fedora => vec![2],
+        Distro::Fedora_Silverblue => vec![2],
+        Distro::GalliumOS => vec![2],
+        Distro::KrassOS => vec![2],
+        Distro::Kubuntu => vec![2],
+        Distro::Lubuntu => vec![2],
+        Distro::openEuler => vec![2],
+        Distro::Peppermint => vec![2],
+        Distro::Pop__OS => vec![2],
+        Distro::Ubuntu_Cinnamon => vec![2],
+        Distro::Ubuntu_Kylin => vec![2],
+        Distro::Ubuntu_MATE => vec![2],
+        Distro::Ubuntu_old => vec![2],
+        Distro::Ubuntu_Studio => vec![2],
+        Distro::Ubuntu_Sway => vec![2],
+        Distro::Ultramarine_Linux => vec![2],
+        Distro::Univention => vec![2],
+        Distro::Vanilla => vec![2],
+        Distro::Xubuntu => vec![2],
+        _ => Vec::new(),
     };
-    (
-        fg.into_iter()
-            .map(|fore| {
-                fore.try_into()
-                    .expect("`fore` should be a valid neofetch color index")
-            })
-            .collect(),
-        bg.into_iter()
-            .map(|back| {
-                back.try_into()
-                    .expect("`back` should be a valid neofetch color index")
-            })
-            .collect(),
-    )
+
+    fg.into_iter()
+        .map(|fore| {
+            fore.try_into()
+                .expect("`fore` should be a valid neofetch color index")
+        })
+        .collect()
 }

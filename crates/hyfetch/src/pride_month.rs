@@ -1,5 +1,5 @@
 use std::io::{self, Write as _};
-use std::num::{NonZeroU16, NonZeroU8, NonZeroUsize, Wrapping};
+use std::num::{NonZeroU16, NonZeroUsize, Wrapping};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,54 +48,47 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
         const TEXT_BORDER_WIDTH: u16 = 2;
         const NOTICE_BORDER_WIDTH: u16 = 1;
         const VERTICAL_MARGIN: u16 = 1;
-        let notice_w: NonZeroUsize = NOTICE
-            .len()
-            .try_into()
-            .expect("`NOTICE` should not be empty");
-        let notice_w: NonZeroU8 = notice_w
+        let notice_w = NOTICE.len();
+        let notice_w: u8 = notice_w
             .try_into()
             .expect("`NOTICE` width should fit in `u8`");
-        let notice_h: NonZeroUsize = NOTICE
-            .lines()
-            .count()
-            .try_into()
-            .expect("`NOTICE` should not be empty");
-        let notice_h: NonZeroU8 = notice_h
+        let notice_h = NOTICE.lines().count();
+        let notice_h: u8 = notice_h
             .try_into()
             .expect("`NOTICE` height should fit in `u8`");
         let term_w_min = cmp::max(
-            NonZeroU16::from(text_width)
+            u16::from(text_width)
                 .checked_add(TEXT_BORDER_WIDTH.checked_mul(2).unwrap())
                 .unwrap(),
-            NonZeroU16::from(notice_w)
+            u16::from(notice_w)
                 .checked_add(NOTICE_BORDER_WIDTH.checked_mul(2).unwrap())
                 .unwrap(),
         );
-        let term_h_min = NonZeroU16::from(text_height)
-            .checked_add(notice_h.get().into())
+        let term_h_min = u16::from(text_height)
+            .checked_add(notice_h.into())
             .unwrap()
             .checked_add(VERTICAL_MARGIN.checked_mul(2).unwrap())
             .unwrap();
-        if w >= term_w_min && h >= term_h_min {
+        if w.get() >= term_w_min && h.get() >= term_h_min {
             (text, text_width, text_height)
         } else {
             let text = &TEXT_ASCII_SMALL[1..TEXT_ASCII_SMALL.len().checked_sub(1).unwrap()];
             let (text_width, text_height) =
                 ascii_size(text).expect("text ascii should have valid width and height");
             let term_w_min = cmp::max(
-                NonZeroU16::from(text_width)
+                u16::from(text_width)
                     .checked_add(TEXT_BORDER_WIDTH.checked_mul(2).unwrap())
                     .unwrap(),
-                NonZeroU16::from(notice_w)
+                u16::from(notice_w)
                     .checked_add(NOTICE_BORDER_WIDTH.checked_mul(2).unwrap())
                     .unwrap(),
             );
-            let term_h_min = NonZeroU16::from(text_height)
-                .checked_add(notice_h.get().into())
+            let term_h_min = u16::from(text_height)
+                .checked_add(notice_h.into())
                 .unwrap()
                 .checked_add(VERTICAL_MARGIN.checked_mul(2).unwrap())
                 .unwrap();
-            if w < term_w_min || h < term_h_min {
+            if w.get() < term_w_min || h.get() < term_h_min {
                 return Err(anyhow!(
                     "terminal size should be at least ({term_w_min} * {term_h_min})"
                 ));
@@ -115,19 +108,15 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
     let text_start_y = h
         .get()
         .div_euclid(2)
-        .checked_sub(u16::from(text_height.get() / 2))
+        .checked_sub((text_height / 2).into())
         .unwrap();
-    let text_end_y = text_start_y
-        .checked_add(NonZeroU16::from(text_height).get())
-        .unwrap();
+    let text_end_y = text_start_y.checked_add(text_height.into()).unwrap();
     let text_start_x = w
         .get()
         .div_euclid(2)
-        .checked_sub(u16::from(text_width.get() / 2))
+        .checked_sub((text_width / 2).into())
         .unwrap();
-    let text_end_x = text_start_x
-        .checked_add(NonZeroU16::from(text_width).get())
-        .unwrap();
+    let text_end_x = text_start_x.checked_add(text_width.into()).unwrap();
 
     let notice_start_x = w
         .get()
