@@ -230,6 +230,11 @@ impl NormalizedAsciiArt {
                                     );
                                 },
                             };
+
+                            if span.is_empty() {
+                                continue;
+                            }
+
                             let txt = &line[span];
 
                             if fg.contains(&neofetch_color_idx) {
