@@ -51,11 +51,11 @@ where
             .nfc()
             .collect::<String>();
         if variants.contains_key(&variant) {
-            let variant_var = format!("{variant}_varietas");
-            if variants.contains_key(&variant_var) {
+            let variant_fallback = format!("{variant}_fallback");
+            if variants.contains_key(&variant_fallback) {
                 todo!("too many name clashes in ascii distro patterns: {variant}");
             }
-            variants.insert(variant_var, distro);
+            variants.insert(variant_fallback, distro);
             continue;
         }
         variants.insert(variant, distro);
