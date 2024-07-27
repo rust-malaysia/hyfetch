@@ -1,11 +1,12 @@
 use std::borrow::Cow;
 use std::fmt::Write as _;
-use std::num::NonZeroU8;
+use std::ops::Range;
 
 use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result};
-use itertools::Itertools as _;
+use indexmap::IndexMap;
 use tracing::debug;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::color_util::{
     color, ForegroundBackground, NeofetchAsciiIndexedColor, ToAnsiString as _,
@@ -21,25 +22,23 @@ use crate::types::{AnsiMode, TerminalTheme};
 pub struct RawAsciiArt {
     pub asc: String,
     pub fg: Vec<NeofetchAsciiIndexedColor>,
-    pub bg: Vec<NeofetchAsciiIndexedColor>,
 }
 
 /// Normalized ascii art where every line has the same width.
 #[derive(Clone, Debug)]
 pub struct NormalizedAsciiArt {
     pub lines: Vec<String>,
-    pub w: NonZeroU8,
-    pub h: NonZeroU8,
+    pub w: u8,
+    pub h: u8,
     pub fg: Vec<NeofetchAsciiIndexedColor>,
-    pub bg: Vec<NeofetchAsciiIndexedColor>,
 }
 
 /// Recolored ascii art with all color codes replaced.
 #[derive(Clone, Debug)]
 pub struct RecoloredAsciiArt {
     pub lines: Vec<String>,
-    pub w: NonZeroU8,
-    pub h: NonZeroU8,
+    pub w: u8,
+    pub h: u8,
 }
 
 impl RawAsciiArt {
@@ -55,7 +54,7 @@ impl RawAsciiArt {
             .lines()
             .map(|line| {
                 let (line_w, _) = ascii_size(line).unwrap();
-                let pad = " ".repeat(usize::from(w.get().checked_sub(line_w.get()).unwrap()));
+                let pad = " ".repeat(usize::from(w.checked_sub(line_w).unwrap()));
                 format!("{line}{pad}")
             })
             .collect();
@@ -65,7 +64,6 @@ impl RawAsciiArt {
             w,
             h,
             fg: self.fg.clone(),
-            bg: self.bg.clone(),
         })
     }
 }
@@ -82,12 +80,18 @@ impl NormalizedAsciiArt {
     ) -> Result<RecoloredAsciiArt> {
         debug!("recolor ascii");
 
+        if self.lines.is_empty() {
+            return Ok(RecoloredAsciiArt {
+                lines: self.lines.clone(),
+                w: 0,
+                h: 0,
+            });
+        }
+
         let reset = color("&~&*", color_mode).expect("color reset should not be invalid");
 
         let lines = match (color_align, self) {
-            (ColorAlignment::Horizontal, Self { fg, bg, .. })
-                if !fg.is_empty() || !bg.is_empty() =>
-            {
+            (ColorAlignment::Horizontal, Self { fg, .. }) => {
                 let Self { lines, .. } = self
                     .fill_starting()
                     .context("failed to fill in starting neofetch color codes")?;
@@ -117,156 +121,160 @@ impl NormalizedAsciiArt {
 
                 // Add new colors
                 let lines = {
-                    let ColorProfile { colors } =
-                        color_profile.with_length(self.h).with_context(|| {
+                    let ColorProfile { colors } = color_profile
+                        .with_length(self.h.try_into().expect("`h` should not be 0"))
+                        .with_context(|| {
                             format!("failed to spread color profile to length {h}", h = self.h)
                         })?;
                     lines.enumerate().map(move |(i, line)| {
-                        let mut replacements = NEOFETCH_COLOR_PATTERNS;
-                        let bg_color = colors[i].to_ansi_string(color_mode, {
-                            // This is "background" in the ascii art, but foreground text in
-                            // terminal
-                            ForegroundBackground::Foreground
-                        });
-                        for &back in bg {
-                            replacements[usize::from(u8::from(back)).checked_sub(1).unwrap()] =
-                                &bg_color;
-                        }
+                        let bg_color =
+                            colors[i].to_ansi_string(color_mode, ForegroundBackground::Foreground);
+                        const N: usize = NEOFETCH_COLOR_PATTERNS.len();
+                        let replacements = [&bg_color; N];
                         ac.replace_all(line, &replacements)
                     })
                 };
 
-                // Remove existing colors
-                let asc = {
-                    let mut lines = lines;
-                    let asc = lines.join("\n");
-                    const N: usize = NEOFETCH_COLOR_PATTERNS.len();
-                    let replacements: [&str; N] = [&reset; N];
-                    ac.replace_all(&asc, &replacements)
-                };
-                let lines = asc.lines();
-
                 // Reset colors at end of each line to prevent color bleeding
-                let lines = lines.map(|line| format!("{line}{reset}"));
-
-                lines.collect()
+                lines.map(|line| format!("{line}{reset}")).collect()
             },
-            (ColorAlignment::Vertical, Self { fg, bg, .. }) if !fg.is_empty() || !bg.is_empty() => {
+            (ColorAlignment::Vertical, Self { fg, .. }) if !fg.is_empty() => {
+                if self.w == 0 {
+                    return Ok(RecoloredAsciiArt {
+                        lines: self.lines.clone(),
+                        w: 0,
+                        h: self.h,
+                    });
+                }
+
                 let Self { lines, .. } = self
                     .fill_starting()
                     .context("failed to fill in starting neofetch color codes")?;
 
-                let color_profile = color_profile.with_length(self.w).with_context(|| {
-                    format!("failed to spread color profile to length {w}", w = self.w)
-                })?;
+                let color_profile = color_profile
+                    .with_length(self.w.try_into().expect("`w` should not be 0"))
+                    .with_context(|| {
+                        format!("failed to spread color profile to length {w}", w = self.w)
+                    })?;
 
                 // Apply colors
-                let lines: Vec<_> = {
-                    let ac = NEOFETCH_COLORS_AC
-                        .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
-                    lines
-                        .into_iter()
-                        .map(|line| {
-                            let line: &str = line.as_ref();
+                let ac = NEOFETCH_COLORS_AC
+                    .get_or_init(|| AhoCorasick::new(NEOFETCH_COLOR_PATTERNS).unwrap());
+                lines
+                    .into_iter()
+                    .map(|line| {
+                        let line: &str = line.as_ref();
 
-                            let mut matches = ac.find_iter(line).peekable();
-                            let mut dst = String::new();
-                            let mut offset: u8 = 0;
-                            loop {
-                                let current = matches.next();
-                                let next = matches.peek();
-                                let (neofetch_color_idx, span, done) = match (current, next) {
-                                    (Some(m), Some(m_next)) => {
-                                        let ai_start = m.start().checked_add(3).unwrap();
-                                        let ai_end = m.end().checked_sub(1).unwrap();
-                                        let neofetch_color_idx: NeofetchAsciiIndexedColor = line
-                                            [ai_start..ai_end]
-                                            .parse()
-                                            .expect("neofetch color index should be valid");
-                                        offset = offset
-                                            .checked_add(u8::try_from(m.len()).unwrap())
-                                            .unwrap();
-                                        let mut span = m.span();
-                                        span.start = m.end();
-                                        span.end = m_next.start();
-                                        (neofetch_color_idx, span, false)
-                                    },
-                                    (Some(m), None) => {
-                                        // Last color code
-                                        let ai_start = m.start().checked_add(3).unwrap();
-                                        let ai_end = m.end().checked_sub(1).unwrap();
-                                        let neofetch_color_idx: NeofetchAsciiIndexedColor = line
-                                            [ai_start..ai_end]
-                                            .parse()
-                                            .expect("neofetch color index should be valid");
-                                        offset = offset
-                                            .checked_add(u8::try_from(m.len()).unwrap())
-                                            .unwrap();
-                                        let mut span = m.span();
-                                        span.start = m.end();
-                                        span.end = line.len();
-                                        (neofetch_color_idx, span, true)
-                                    },
-                                    (None, _) => {
-                                        // No color code in the entire line
-                                        unreachable!(
-                                            "`fill_starting` ensured each line of ascii art \
-                                             starts with neofetch color code"
-                                        );
-                                    },
-                                };
-                                let txt = &line[span];
+                        // `AhoCorasick` operates on bytes; we need to map that back to grapheme
+                        // clusters (i.e. a character as seen on the terminal)
+                        // See https://github.com/BurntSushi/aho-corasick/issues/72#issuecomment-821128859
+                        let byte_idx_to_grapheme_idx: IndexMap<usize, usize> = {
+                            let mut m: IndexMap<_, _> = line
+                                .grapheme_indices(true)
+                                .enumerate()
+                                .map(|(gr_idx, (byte_idx, _))| (byte_idx, gr_idx))
+                                .collect();
+                            // Add an extra entry at the end, to support lookup using exclusive
+                            // range end
+                            m.insert(line.len(), m.len());
+                            m
+                        };
 
-                                if fg.contains(&neofetch_color_idx) {
-                                    let fore = color(
-                                        match theme {
-                                            TerminalTheme::Light => "&0",
-                                            TerminalTheme::Dark => "&f",
-                                        },
-                                        color_mode,
-                                    )
-                                    .expect("foreground color should not be invalid");
-                                    write!(dst, "{fore}{txt}{reset}").unwrap();
-                                } else if bg.contains(&neofetch_color_idx) {
-                                    let adjusted_start =
-                                        span.start.checked_sub(usize::from(offset)).unwrap();
-                                    let adjusted_end =
-                                        span.end.checked_sub(usize::from(offset)).unwrap();
-                                    dst.push_str(
-                                        &ColorProfile::new(Vec::from(
-                                            &color_profile.colors[adjusted_start..adjusted_end],
-                                        ))
+                        let mut matches = ac.find_iter(line).peekable();
+                        let mut dst = String::new();
+                        let mut offset: u8 = 0;
+                        loop {
+                            let current = matches.next();
+                            let next = matches.peek();
+                            let (neofetch_color_idx, span, done) = match (current, next) {
+                                (Some(m), Some(m_next)) => {
+                                    let ai_start = m.start().checked_add(3).unwrap();
+                                    let ai_end = m.end().checked_sub(1).unwrap();
+                                    let neofetch_color_idx: NeofetchAsciiIndexedColor = line
+                                        [ai_start..ai_end]
+                                        .parse()
+                                        .expect("neofetch color index should be valid");
+                                    if offset == 0 && m.start() > 0 {
+                                        dst.push_str(&line[..m.start()]);
+                                    }
+                                    offset =
+                                        offset.checked_add(u8::try_from(m.len()).unwrap()).unwrap();
+                                    let mut span = m.span();
+                                    span.start = m.end();
+                                    span.end = m_next.start();
+                                    (neofetch_color_idx, span, false)
+                                },
+                                (Some(m), None) => {
+                                    // Last color code
+                                    let ai_start = m.start().checked_add(3).unwrap();
+                                    let ai_end = m.end().checked_sub(1).unwrap();
+                                    let neofetch_color_idx: NeofetchAsciiIndexedColor = line
+                                        [ai_start..ai_end]
+                                        .parse()
+                                        .expect("neofetch color index should be valid");
+                                    if offset == 0 && m.start() > 0 {
+                                        dst.push_str(&line[..m.start()]);
+                                    }
+                                    offset =
+                                        offset.checked_add(u8::try_from(m.len()).unwrap()).unwrap();
+                                    let mut span = m.span();
+                                    span.start = m.end();
+                                    span.end = line.len();
+                                    (neofetch_color_idx, span, true)
+                                },
+                                (None, _) => {
+                                    // No color code in the entire line
+                                    unreachable!(
+                                        "`fill_starting` ensured each line of ascii art starts \
+                                         with neofetch color code"
+                                    );
+                                },
+                            };
+                            let txt = &line[span];
+
+                            if fg.contains(&neofetch_color_idx) {
+                                let fore = color(
+                                    match theme {
+                                        TerminalTheme::Light => "&0",
+                                        TerminalTheme::Dark => "&f",
+                                    },
+                                    color_mode,
+                                )
+                                .expect("foreground color should not be invalid");
+                                write!(dst, "{fore}{txt}{reset}").unwrap();
+                            } else {
+                                let mut c_range: Range<usize> = span.into();
+                                c_range.start = byte_idx_to_grapheme_idx
+                                    .get(&c_range.start)
+                                    .unwrap()
+                                    .checked_sub(usize::from(offset))
+                                    .unwrap();
+                                c_range.end = byte_idx_to_grapheme_idx
+                                    .get(&c_range.end)
+                                    .unwrap()
+                                    .checked_sub(usize::from(offset))
+                                    .unwrap();
+                                dst.push_str(
+                                    &ColorProfile::new(Vec::from(&color_profile.colors[c_range]))
                                         .color_text(
                                             txt,
                                             color_mode,
-                                            {
-                                                // This is "background" in the ascii art, but
-                                                // foreground text in terminal
-                                                ForegroundBackground::Foreground
-                                            },
+                                            ForegroundBackground::Foreground,
                                             false,
                                         )
                                         .context("failed to color text using color profile")?,
-                                    );
-                                } else {
-                                    dst.push_str(txt);
-                                }
-
-                                if done {
-                                    break;
-                                }
+                                );
                             }
-                            Ok(dst)
-                        })
-                        .collect::<Result<_>>()?
-                };
 
-                lines
+                            if done {
+                                break;
+                            }
+                        }
+                        Ok(dst)
+                    })
+                    .collect::<Result<_>>()?
             },
-            (ColorAlignment::Horizontal, Self { fg, bg, .. })
-            | (ColorAlignment::Vertical, Self { fg, bg, .. })
-                if fg.is_empty() && bg.is_empty() =>
-            {
+            (ColorAlignment::Vertical, Self { fg, .. }) if fg.is_empty() => {
                 // Remove existing colors
                 let asc = {
                     let asc = self.lines.join("\n");
@@ -279,38 +287,14 @@ impl NormalizedAsciiArt {
                 let lines = asc.lines();
 
                 // Add new colors
-                match color_align {
-                    ColorAlignment::Horizontal => {
-                        let ColorProfile { colors } =
-                            color_profile.with_length(self.h).with_context(|| {
-                                format!("failed to spread color profile to length {h}", h = self.h)
-                            })?;
-                        lines
-                            .enumerate()
-                            .map(|(i, line)| {
-                                let fore = colors[i]
-                                    .to_ansi_string(color_mode, ForegroundBackground::Foreground);
-                                format!("{fore}{line}{reset}")
-                            })
-                            .collect()
-                    },
-                    ColorAlignment::Vertical => lines
-                        .map(|line| {
-                            let line = color_profile
-                                .color_text(
-                                    line,
-                                    color_mode,
-                                    ForegroundBackground::Foreground,
-                                    false,
-                                )
-                                .context("failed to color text using color profile")?;
-                            Ok(line)
-                        })
-                        .collect::<Result<_>>()?,
-                    _ => {
-                        unreachable!();
-                    },
-                }
+                lines
+                    .map(|line| {
+                        let line = color_profile
+                            .color_text(line, color_mode, ForegroundBackground::Foreground, false)
+                            .context("failed to color text using color profile")?;
+                        Ok(line)
+                    })
+                    .collect::<Result<_>>()?
             },
             (
                 ColorAlignment::Custom {
@@ -344,9 +328,7 @@ impl NormalizedAsciiArt {
                 let lines = asc.lines();
 
                 // Reset colors at end of each line to prevent color bleeding
-                let lines = lines.map(|line| format!("{line}{reset}"));
-
-                lines.collect()
+                lines.map(|line| format!("{line}{reset}")).collect()
             },
             _ => {
                 unreachable!()
@@ -382,19 +364,24 @@ impl NormalizedAsciiArt {
                             if m.start() == 0
                                 || line[0..m.start()].trim_end_matches(' ').is_empty() =>
                         {
-                            // line starts with neofetch color code, do nothing
+                            // Line starts with neofetch color code
+                            last = Some(&line[m.span()]);
                         },
-                        _ => {
+                        Some(_) => {
                             new.push_str(last.context(
                                 "failed to find neofetch color code from a previous line",
                             )?);
+                        },
+                        None => {
+                            new.push_str(last.unwrap_or(NEOFETCH_COLOR_PATTERNS[0]));
                         },
                     }
                     new.push_str(line);
 
                     // Get the last placeholder for the next line
                     if let Some(m) = matches.last() {
-                        last = Some(&line[m.span()])
+                        last.context("non-space character seen before first color code")?;
+                        last = Some(&line[m.span()]);
                     }
 
                     Ok(new)
@@ -404,7 +391,6 @@ impl NormalizedAsciiArt {
         Ok(Self {
             lines,
             fg: self.fg.clone(),
-            bg: self.bg.clone(),
             ..*self
         })
     }

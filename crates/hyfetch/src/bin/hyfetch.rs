@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, IsTerminal as _, Read as _, Write as _};
 use std::iter::zip;
-use std::num::{NonZeroU16, NonZeroU8, NonZeroUsize};
+use std::num::NonZeroU8;
 use std::path::{Path, PathBuf};
 
 use aho_corasick::AhoCorasick;
@@ -22,8 +22,8 @@ use hyfetch::models::Config;
 #[cfg(feature = "macchina")]
 use hyfetch::neofetch_util::macchina_path;
 use hyfetch::neofetch_util::{
-    self, ascii_size, fastfetch_path, get_distro_ascii, literal_input, ColorAlignment,
-    NEOFETCH_COLORS_AC, NEOFETCH_COLOR_PATTERNS, TEST_ASCII,
+    self, fastfetch_path, get_distro_ascii, literal_input, ColorAlignment, NEOFETCH_COLORS_AC,
+    NEOFETCH_COLOR_PATTERNS, TEST_ASCII,
 };
 use hyfetch::presets::{AssignLightness, Preset};
 use hyfetch::pride_month;
@@ -132,7 +132,6 @@ fn main() -> Result<()> {
             asc: fs::read_to_string(&path)
                 .with_context(|| format!("failed to read ascii from {path:?}"))?,
             fg: Vec::new(),
-            bg: Vec::new(),
         }
     } else {
         get_distro_ascii(distro, backend).context("failed to get distro ascii")?
@@ -267,14 +266,14 @@ fn create_config(
         let (Width(term_w), Height(term_h)) =
             terminal_size().context("failed to get terminal size")?;
         let (term_w_min, term_h_min) = (
-            NonZeroU16::from(asc.w)
-                .checked_mul(NonZeroU16::new(2).unwrap())
+            u16::from(asc.w)
+                .checked_mul(2)
                 .unwrap()
                 .checked_add(4)
                 .unwrap(),
-            NonZeroU16::new(30).unwrap(),
+            30,
         );
-        if term_w < term_w_min.get() || term_h < term_h_min.get() {
+        if term_w < term_w_min || term_h < term_h_min {
             printc(
                 format!(
                     "&cWarning: Your terminal is too small ({term_w} * {term_h}).\nPlease resize \
@@ -612,9 +611,15 @@ fn create_config(
     //////////////////////////////
     // 4. Dim/lighten colors
 
-    let test_ascii = &TEST_ASCII[1..TEST_ASCII.len().checked_sub(1).unwrap()];
-    let (test_ascii_width, test_ascii_height) =
-        ascii_size(test_ascii).expect("test ascii should have valid width and height");
+    let test_ascii = {
+        let asc = &TEST_ASCII[1..TEST_ASCII.len().checked_sub(1).unwrap()];
+        let asc = RawAsciiArt {
+            asc: asc.to_owned(),
+            fg: Vec::new(),
+        };
+        asc.to_normalized()
+            .expect("normalizing test ascii should not fail")
+    };
 
     let select_lightness = || -> Result<Lightness> {
         clear_screen(Some(&title), color_mode, debug_mode).context("failed to clear screen")?;
@@ -642,12 +647,7 @@ fn create_config(
             let (Width(term_w), _) = terminal_size().context("failed to get terminal size")?;
             let num_cols = cmp::max(
                 1,
-                term_w.div_euclid(
-                    NonZeroU16::from(test_ascii_width)
-                        .checked_add(2)
-                        .unwrap()
-                        .get(),
-                ),
+                term_w.div_euclid(u16::from(test_ascii.w).checked_add(2).unwrap()),
             );
             let num_cols: u8 = num_cols.try_into().expect("`num_cols` should fit in `u8`");
             const MIN: f32 = 0.15;
@@ -661,20 +661,20 @@ fn create_config(
                     });
             let row: Vec<Vec<String>> = ratios
                 .map(|r| {
-                    let asc = RawAsciiArt {
-                        asc: test_ascii.replace(
+                    let mut asc = test_ascii.clone();
+                    asc.lines = asc
+                        .lines
+                        .join("\n")
+                        .replace(
                             "{txt}",
                             &format!(
                                 "{lightness:^5}",
                                 lightness = format!("{lightness:.0}%", lightness = r * 100.0)
                             ),
-                        ),
-                        fg: Vec::new(),
-                        bg: Vec::new(),
-                    };
-                    let asc = asc
-                        .to_normalized()
-                        .expect("normalizing test ascii should not fail");
+                        )
+                        .lines()
+                        .map(ToOwned::to_owned)
+                        .collect();
                     let asc = asc
                         .to_recolored(
                             &color_align,
@@ -690,7 +690,7 @@ fn create_config(
                     asc.lines
                 })
                 .collect();
-            for i in 0..NonZeroUsize::from(test_ascii_height).get() {
+            for i in 0..usize::from(test_ascii.h) {
                 let mut line = Vec::new();
                 for lines in &row {
                     line.push(&*lines[i]);
@@ -769,7 +769,7 @@ fn create_config(
             terminal_size().context("failed to get terminal size")?;
         let ascii_per_row = cmp::max(
             1,
-            term_w.div_euclid(NonZeroU16::from(asc.w).checked_add(2).unwrap().get()),
+            term_w.div_euclid(u16::from(asc.w).checked_add(2).unwrap()),
         );
         let ascii_per_row: u8 = ascii_per_row
             .try_into()
@@ -778,7 +778,7 @@ fn create_config(
             1,
             term_h
                 .saturating_sub(8)
-                .div_euclid(NonZeroU16::from(asc.h).checked_add(1).unwrap().get()),
+                .div_euclid(u16::from(asc.h).checked_add(1).unwrap()),
         );
         let ascii_rows: u8 = ascii_rows
             .try_into()
@@ -866,10 +866,7 @@ fn create_config(
                     .to_recolored(ca, &color_profile, color_mode, theme)
                     .context("failed to recolor ascii")?
                     .lines;
-                v.push(format!(
-                    "{k:^asc_width$}",
-                    asc_width = NonZeroUsize::from(asc.w).get()
-                ));
+                v.push(format!("{k:^asc_width$}", asc_width = usize::from(asc.w)));
                 Ok(v)
             })
             .collect::<Result<_>>()?;
@@ -878,7 +875,7 @@ fn create_config(
             let row: Vec<Vec<String>> = row.collect();
 
             // Print by row
-            for i in 0..NonZeroUsize::from(asc.h).checked_add(1).unwrap().get() {
+            for i in 0..usize::from(asc.h).checked_add(1).unwrap() {
                 let mut line = Vec::new();
                 for lines in &row {
                     line.push(&*lines[i]);
