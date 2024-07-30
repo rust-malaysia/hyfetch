@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::num::{NonZeroU16, NonZeroUsize, Wrapping};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -6,12 +7,16 @@ use std::time::Duration;
 use std::{cmp, thread};
 
 use anyhow::{anyhow, Context as _, Result};
+use crossterm::execute;
+use crossterm::terminal::{
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use palette::blend::Blend as _;
 use palette::{LinSrgba, Srgb, WithAlpha as _};
 use strum::VariantArray as _;
 use terminal_size::{terminal_size, Height, Width};
 
-use crate::color_util::{clear_screen, color, printc, ForegroundBackground, ToAnsiString as _};
+use crate::color_util::{color, ForegroundBackground, ToAnsiString as _};
 use crate::neofetch_util::ascii_size;
 use crate::presets::Preset;
 use crate::types::AnsiMode;
@@ -143,19 +148,25 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
     let black = LinSrgba::new(0.0, 0.0, 0.0, 0.5);
 
     let draw_frame = |frame: usize| -> Result<()> {
+        execute!(io::stdout(), BeginSynchronizedUpdate)
+            .context("failed to begin synchronized update")?;
+
         let mut buf = String::new();
 
         // Loop over the height
         for y in 0..h.get() {
             // Print the starting color
-            buf.push_str(
-                &colors[frame
+            write!(
+                buf,
+                "{bg}{fg}",
+                bg = colors[frame
                     .wrapping_add(y.into())
                     .div_euclid(block_width.get().into())
                     .rem_euclid(colors.len())]
                 .to_ansi_string(color_mode, ForegroundBackground::Background),
-            );
-            buf.push_str(&fg.to_ansi_string(color_mode, ForegroundBackground::Foreground));
+                fg = fg.to_ansi_string(color_mode, ForegroundBackground::Foreground)
+            )
+            .unwrap();
 
             // Loop over the width
             for x in 0..w.get() {
@@ -204,48 +215,68 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
                     {
                         let c: LinSrgba = c.with_alpha(1.0).into_linear();
                         let c = Srgb::<u8>::from_linear(c.overlay(black).without_alpha());
-                        buf.push_str(
-                            &c.to_ansi_string(color_mode, ForegroundBackground::Background),
-                        );
+                        write!(
+                            buf,
+                            "{bg}",
+                            bg = c.to_ansi_string(color_mode, ForegroundBackground::Background),
+                        )
+                        .unwrap();
                     } else {
-                        buf.push_str(
-                            &c.to_ansi_string(color_mode, ForegroundBackground::Background),
-                        );
+                        write!(
+                            buf,
+                            "{bg}",
+                            bg = c.to_ansi_string(color_mode, ForegroundBackground::Background),
+                        )
+                        .unwrap();
                     }
                 }
 
                 // If text should be printed, print text
                 if y_text && text_start_x <= x && x < text_end_x {
-                    buf.push(
-                        text_lines[usize::from(y.checked_sub(text_start_y).unwrap())]
+                    write!(
+                        buf,
+                        "{text_char}",
+                        text_char = text_lines[usize::from(y.checked_sub(text_start_y).unwrap())]
                             .chars()
                             .nth(usize::from(x.checked_sub(text_start_x).unwrap()))
                             .unwrap(),
-                    );
+                    )
+                    .unwrap();
                 } else if y == notice_y && notice_start_x <= x && x < notice_end_x {
-                    buf.push(
-                        NOTICE
+                    write!(
+                        buf,
+                        "{notice_char}",
+                        notice_char = NOTICE
                             .chars()
                             .nth(usize::from(x.checked_sub(notice_start_x).unwrap()))
                             .unwrap(),
-                    );
+                    )
+                    .unwrap();
                 } else {
-                    buf.push(' ');
+                    write!(buf, " ").unwrap();
                 }
             }
 
             // New line if it isn't the last line
             if y != h.get().checked_sub(1).unwrap() {
-                buf.push_str(
-                    &color("&r\n", color_mode)
-                        .expect("line separator should not contain invalid color codes"),
-                );
+                writeln!(
+                    buf,
+                    "{reset}",
+                    reset = color("&r", color_mode).expect("reset should be valid"),
+                )
+                .unwrap();
             }
         }
 
-        write!(io::stdout(), "{buf}")
-            .and_then(|_| io::stdout().flush())
-            .context("failed to write to stdout")?;
+        {
+            let mut stdout = io::stdout().lock();
+            write!(stdout, "{buf}")
+                .and_then(|_| stdout.flush())
+                .context("failed to write to stdout")?;
+        }
+
+        execute!(io::stdout(), EndSynchronizedUpdate)
+            .context("failed to end synchronized update")?;
 
         Ok(())
     };
@@ -278,25 +309,19 @@ pub fn start_animation(color_mode: AnsiMode) -> Result<()> {
     const SPEED: u8 = 2;
     let frame_delay = Duration::from_secs_f32(1.0 / 25.0);
 
-    loop {
-        // Clear the screen
-        clear_screen(None, color_mode, false).context("failed to clear screen")?;
+    execute!(io::stdout(), EnterAlternateScreen).context("failed to enter alternate screen")?;
 
+    loop {
         draw_frame(frame.0)?;
         frame += usize::from(SPEED);
         thread::sleep(frame_delay);
 
-        // TODO: handle Ctrl+C so that we can clear the screen; but we don't have a nice
-        // way to unregister the signal handler after that :'(
-        // See https://github.com/Detegr/rust-ctrlc/issues/106
         if key_pressed.load(Ordering::Acquire) {
             break;
         }
     }
 
-    // Clear the screen
-    printc("&r", color_mode).context("failed to reset terminal style")?;
-    clear_screen(None, color_mode, false).context("failed to clear screen")?;
+    execute!(io::stdout(), LeaveAlternateScreen).context("failed to leave alternate screen")?;
 
     Ok(())
 }
