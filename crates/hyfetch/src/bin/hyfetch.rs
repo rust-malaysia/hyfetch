@@ -57,7 +57,19 @@ fn main() -> Result<()> {
     // Use a custom distro
     let distro = options.distro.as_ref();
 
-    let backend = options.backend.unwrap_or(Backend::Neofetch);
+    let backend = options.backend.unwrap_or({
+        if cfg!(all(unix, not(target_os = "android"))) {
+            Backend::Neofetch
+        } else {
+            // fastfetch is not a good fallback on *nix; it only supports FreeBSD and not
+            // other *BSD for example
+            // See:
+            // * https://github.com/fastfetch-cli/fastfetch/issues/751#issuecomment-1983717139
+            // * https://github.com/fastfetch-cli/fastfetch/discussions/966#discussioncomment-9555006
+            // * https://github.com/fastfetch-cli/fastfetch/commit/b2cc5c4f043a3af500f62789c33874e29fbcad21
+            Backend::Fastfetch
+        }
+    });
 
     if options.test_print {
         let asc = get_distro_ascii(distro, backend).context("failed to get distro ascii")?;
