@@ -147,6 +147,44 @@ pub enum Preset {
 
     Fraysexual,
 
+    Kenochoric,
+
+    Veldian,
+
+    Solian,
+
+    Lunian,
+
+    Polyam,
+
+    Sapphic,
+
+    Androgyne,
+
+    Interprogress,
+
+    Progress,
+
+    Intersex,
+
+    OldPolyam,
+
+    EqualRights,
+
+    Drag,
+
+    Pronounfluid,
+
+    Pronounflux,
+
+    Exipronoun,
+
+    Neopronoun,
+
+    Neofluid,
+
+    Genderqueer,
+
     /// Meme flag
     Beiyang,
 
@@ -441,6 +479,83 @@ impl Preset {
             // sampled from https://es.m.wikipedia.org/wiki/Archivo:Fraysexual_flag.jpg
             Self::Fraysexual => {
                 ColorProfile::from_hex_colors(vec!["#226CB5", "#94E7DD", "#FFFFFF", "#636363"])
+            },
+
+            Self::Kenochoric => {
+                ColorProfile::from_hex_colors(vec!["#000000", "#2E1569", "#824DB7", "#C7A1D6"])
+            },
+
+            Self::Veldian => ColorProfile::from_hex_colors(vec![
+                "#D182A8", "#FAF6E0", "#69ACBE", "#5D448F", "#3A113E",
+            ]),
+
+            Self::Solian => ColorProfile::from_hex_colors(vec![
+                "#FFF8ED", "#FFE7A8", "#F1B870", "#A56058", "#46281E",
+            ]),
+
+            Self::Lunian => ColorProfile::from_hex_colors(vec![
+                "#2F0E62", "#6F41B1", "#889FDF", "#7DDFD5", "#D2F2E2",
+            ]),
+
+            // pulled from https://polyamproud.com/flag
+            Self::Polyam => ColorProfile::from_hex_colors(vec![
+                "#FFFFFF", "#FCBF00", "#009FE3", "#E50051", "#340C46",
+            ]),
+
+            Self::Sapphic => ColorProfile::from_hex_colors(vec![
+                "#FD8BA8", "#FBF2FF", "#C76BC5", "#FDD768", "#C76BC5", "#FBF2FF", "#FD8BA8",
+            ]),
+
+            Self::Androgyne => ColorProfile::from_hex_colors(vec!["#FE007F", "#9832FF", "#00B8E7"]),
+
+            Self::Interprogress => ColorProfile::from_hex_colors(vec![
+                "#FFD800", "#7902AA", "#FFFFFF", "#FFAFC8", "#74D7EE", "#613915", "#000000",
+                "#E50000", "#FF8D00", "#FFEE00", "#028121", "#004CFF", "#770088",
+            ]),
+
+            Self::Progress => ColorProfile::from_hex_colors(vec![
+                "#FFFFFF", "#FFAFC8", "#74D7EE", "#613915", "#000000", "#E50000", "#FF8D00",
+                "#FFEE00", "#028121", "#004CFF", "#770088",
+            ]),
+
+            Self::Intersex => ColorProfile::from_hex_colors(vec!["#FFD800", "#7902AA", "#FFD800"])
+                .and_then(|c| c.with_weights(vec![2, 1, 2])),
+
+            Self::OldPolyam => ColorProfile::from_hex_colors(vec![
+                "#0000FF", "#FF0000", "#FFFF00", "#FF0000", "#000000",
+            ]),
+
+            Self::EqualRights => ColorProfile::from_hex_colors(vec![
+                "#0000FF", "#FFFF00", "#0000FF", "#FFFF00", "#0000FF",
+            ])
+            .and_then(|c| c.with_weights(vec![2, 1, 2, 1, 2])),
+
+            Self::Drag => ColorProfile::from_hex_colors(vec![
+                "#CC67FF", "#FFFFFF", "#FFA3E3", "#FFFFFF", "#3366FF",
+            ]),
+
+            Self::Pronounfluid => ColorProfile::from_hex_colors(vec![
+                "#FFB3F9", "#FFFFFF", "#D1FDCB", "#C7B0FF", "#000000", "#B8CCFF",
+            ]),
+
+            Self::Pronounflux => ColorProfile::from_hex_colors(vec![
+                "#FDB3F8", "#B6CCFA", "#18DDD3", "#64FF89", "#FF7690", "#FFFFFF",
+            ]),
+
+            Self::Exipronoun => {
+                ColorProfile::from_hex_colors(vec!["#1C3D34", "#FFFFFF", "#321848", "#000000"])
+            },
+
+            Self::Neopronoun => {
+                ColorProfile::from_hex_colors(vec!["#BCEC64", "#FFFFFF", "#38077A"])
+            },
+
+            Self::Neofluid => ColorProfile::from_hex_colors(vec![
+                "#FFECA0", "#FFFFFF", "#FFECA0", "#38087A", "#BCEC64",
+            ]),
+
+            Self::Genderqueer => {
+                ColorProfile::from_hex_colors(vec!["#B57EDC", "#FFFFFF", "#4A8123"])
             },
 
             Self::Beiyang => ColorProfile::from_hex_colors(vec![
