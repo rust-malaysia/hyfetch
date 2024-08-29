@@ -497,6 +497,7 @@ impl Preset {
                 "#2F0E62", "#6F41B1", "#889FDF", "#7DDFD5", "#D2F2E2",
             ]),
 
+            // pulled from https://polyamproud.com/flag
             Self::Polyam => ColorProfile::from_hex_colors(vec![
                 "#FFFFFF", "#FCBF00", "#009FE3", "#E50051", "#340C46",
             ]),
